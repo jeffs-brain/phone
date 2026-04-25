@@ -6,7 +6,9 @@
   "checkpoints_count": 0,
   "files_touched": [
     "app/index.tsx",
+    "bun.lock",
     "lib/constants.ts",
+    "package.json",
     "services/inference.ts",
     "store/slices/chat.ts",
     "store/types.ts"
@@ -17,6 +19,12 @@
       "transcript": "/d3/8debdad852/0/full.jsonl",
       "content_hash": "/d3/8debdad852/0/content_hash.txt",
       "prompt": "/d3/8debdad852/0/prompt.txt"
+    },
+    {
+      "metadata": "/d3/8debdad852/1/metadata.json",
+      "transcript": "/d3/8debdad852/1/full.jsonl",
+      "content_hash": "/d3/8debdad852/1/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
