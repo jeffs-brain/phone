@@ -24,8 +24,8 @@ export type Slice<T> = StateCreator<RootState, Mutators, [], T>
 
 export type ContentPart =
   | { type: 'text'; text: string }
-  | { type: 'image'; uri: string }
-  | { type: 'audio'; uri: string; durationMs: number }
+  | { type: 'image'; uri: string; name?: string; mimeType?: string; width?: number; height?: number }
+  | { type: 'audio'; uri: string; durationMs: number; name?: string; mimeType?: string }
 
 export type ToolCall = {
   id: string
@@ -36,12 +36,17 @@ export type ToolCall = {
   error?: string
 }
 
+export type AssistantThinkingState = {
+  text: string
+  status: 'streaming' | 'done'
+}
+
 export type Message = {
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool'
   parts: ContentPart[]
   routeDecision?: RouteDecision
-  thinking?: string
+  thinking?: AssistantThinkingState
   toolCalls?: ToolCall[]
   createdAt: number
   // Set only on the in-flight assistant message; cleared on commit.

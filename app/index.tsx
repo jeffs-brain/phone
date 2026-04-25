@@ -1,11 +1,16 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
+import * as DocumentPicker from 'expo-document-picker'
+import * as FileSystem from 'expo-file-system/legacy'
+import * as ImagePicker from 'expo-image-picker'
 import { useRouter } from 'expo-router'
 import {
   ActivityIndicator,
   FlatList,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -57,9 +62,54 @@ const MODEL_LABELS = {
   'gemma-4-E4B': 'Gemma 4 E4B',
 } as const
 
+const TEXT_FILE_MAX_BYTES = 256 * 1024
+const TEXT_FILE_EXTENSIONS = [
+  '.txt',
+  '.md',
+  '.markdown',
+  '.json',
+  '.csv',
+  '.tsv',
+  '.xml',
+  '.yaml',
+  '.yml',
+  '.log',
+  '.js',
+  '.jsx',
+  '.ts',
+  '.tsx',
+  '.py',
+  '.rb',
+  '.go',
+  '.rs',
+  '.java',
+  '.kt',
+  '.swift',
+  '.c',
+  '.cpp',
+  '.h',
+  '.hpp',
+  '.sql',
+] as const
+
+type ThinkingDetail = {
+  readonly status: string
+  readonly text: string
+}
+
+type StructuredThinking = {
+  readonly status?: unknown
+  readonly text?: unknown
+}
+
+type AttachmentWithDisplayName = ContentPart & {
+  readonly fileName?: unknown
+  readonly name?: unknown
+}
+
 const formatContentPart = (part: ContentPart): string => {
   if (part.type === 'text') return part.text
-  if (part.type === 'image') return 'Image attached'
+  if (part.type === 'image') return ''
   return `Audio attached (${Math.round(part.durationMs / 1000)}s)`
 }
 
@@ -93,10 +143,32 @@ const friendlyModelError = (error: string | null): string => {
 
 const isGenerationActive = (status: GenerationStatus): boolean => ACTIVE_GENERATION_STATUSES.includes(status)
 
+const isStructuredThinking = (value: unknown): value is StructuredThinking => (
+  typeof value === 'object' && value !== null
+)
+
+const getThinkingDetail = (thinking: unknown): ThinkingDetail | null => {
+  if (typeof thinking === 'string') {
+    const text = thinking.trim()
+    return text === '' ? null : { status: 'Thinking', text }
+  }
+
+  if (!isStructuredThinking(thinking)) return null
+
+  const text = typeof thinking.text === 'string' ? thinking.text.trim() : ''
+  const status = thinking.status === 'done' ? 'Thoughts' : 'Thinking'
+
+  if (text === '' && status === 'Thinking') return null
+  return { status, text }
+}
+
 const getMessageText = (message: Message): string => {
   if (message.streamingText !== undefined) return message.streamingText
   return message.parts.map(formatContentPart).filter((part) => part.trim() !== '').join('\n\n')
 }
+
+const getImageParts = (message: Message): Extract<ContentPart, { type: 'image' }>[] =>
+  message.parts.filter((part): part is Extract<ContentPart, { type: 'image' }> => part.type === 'image')
 
 const getRoleLabel = (role: Message['role']): string => {
   if (role === 'user') return 'You'
@@ -122,6 +194,76 @@ const getModelDetail = (
   return friendlyModelError(modelError)
 }
 
+const getAttachmentDisplayName = (part: ContentPart): string | null => {
+  const namedPart = part as AttachmentWithDisplayName
+  const name = namedPart.fileName ?? namedPart.name
+  if (typeof name !== 'string') return null
+
+  const trimmed = name.trim()
+  return trimmed === '' ? null : trimmed
+}
+
+const getStagedAttachmentLabel = (part: ContentPart, index: number): string => {
+  const name = getAttachmentDisplayName(part)
+  if (name !== null) return name
+  if (part.type === 'image') return `Image ${index + 1}`
+  if (part.type === 'audio') return `Audio ${Math.round(part.durationMs / 1000)}s`
+  if (part.type === 'text') {
+    const text = part.text.trim()
+    return text === '' ? `Text ${index + 1}` : text
+  }
+  return `File ${index + 1}`
+}
+
+const getStagedAttachmentKey = (part: ContentPart, index: number): string => {
+  if (part.type === 'image' || part.type === 'audio') return `${part.type}-${part.uri}-${index}`
+  if (part.type === 'text') return `${part.type}-${part.text}-${index}`
+  return `attachment-${index}`
+}
+
+const isTextDocument = (asset: DocumentPicker.DocumentPickerAsset): boolean => {
+  const mimeType = asset.mimeType?.toLowerCase()
+  if (mimeType?.startsWith('text/') === true) return true
+  if (
+    mimeType === 'application/json' ||
+    mimeType === 'application/xml' ||
+    mimeType === 'application/yaml' ||
+    mimeType === 'application/x-yaml' ||
+    mimeType === 'text/markdown'
+  ) {
+    return true
+  }
+
+  const lowerName = asset.name.toLowerCase()
+  return TEXT_FILE_EXTENSIONS.some((extension) => lowerName.endsWith(extension))
+}
+
+const textPartFromDocument = async (asset: DocumentPicker.DocumentPickerAsset): Promise<ContentPart> => {
+  if (!isTextDocument(asset)) {
+    throw new Error(`${asset.name} is not a text file Jeff can read yet.`)
+  }
+
+  if (asset.size !== undefined && asset.size > TEXT_FILE_MAX_BYTES) {
+    throw new Error(`${asset.name} is larger than ${Math.round(TEXT_FILE_MAX_BYTES / 1024)} KB.`)
+  }
+
+  const text = await FileSystem.readAsStringAsync(asset.uri, {
+    encoding: FileSystem.EncodingType.UTF8,
+  })
+  const trimmed = text.trim()
+  if (trimmed === '') throw new Error(`${asset.name} is empty.`)
+
+  const header = [
+    `Attached file: ${asset.name}`,
+    asset.mimeType === undefined ? null : `MIME type: ${asset.mimeType}`,
+  ].filter((line): line is string => line !== null)
+
+  return {
+    type: 'text',
+    text: `${header.join('\n')}\n\n${trimmed}`,
+  }
+}
+
 function ProviderBadge({ decision }: { decision: RouteDecision | null }) {
   const label = decision === null ? 'Provider pending' : PROVIDER_LABELS[decision.provider]
   const detail = decision === null
@@ -145,11 +287,126 @@ function EmptyState() {
   )
 }
 
+function ThinkingDisclosure({ thinking }: { thinking: ThinkingDetail }) {
+  const [expanded, setExpanded] = useState(false)
+  const hasDetail = thinking.text !== ''
+
+  return (
+    <View style={styles.thinkingPanel}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded, disabled: !hasDetail }}
+        disabled={!hasDetail}
+        onPress={() => setExpanded((value) => !value)}
+        style={({ pressed }) => [
+          styles.thinkingToggle,
+          !hasDetail ? styles.thinkingToggleStatic : null,
+          pressed ? styles.pressed : null,
+        ]}
+      >
+        <Text style={styles.thinkingStatus}>{thinking.status}</Text>
+        {hasDetail ? (
+          <Text style={styles.thinkingToggleText}>{expanded ? 'Hide' : 'Show'}</Text>
+        ) : null}
+      </Pressable>
+      {expanded && hasDetail ? (
+        <Text style={styles.thinkingText}>{thinking.text}</Text>
+      ) : null}
+    </View>
+  )
+}
+
+function StagedAttachmentPreview({
+  index,
+  onRemove,
+  part,
+}: {
+  readonly index: number
+  readonly onRemove: (index: number) => void
+  readonly part: ContentPart
+}) {
+  const label = getStagedAttachmentLabel(part, index)
+
+  return (
+    <View style={styles.stagedAttachment}>
+      {part.type === 'image' ? (
+        <Image
+          resizeMode="cover"
+          source={{ uri: part.uri }}
+          style={styles.stagedImage}
+        />
+      ) : (
+        <View style={styles.stagedFilePreview}>
+          <Text style={styles.stagedFilePreviewText}>File</Text>
+        </View>
+      )}
+      <Text numberOfLines={1} style={styles.stagedAttachmentLabel}>{label}</Text>
+      <Pressable
+        accessibilityLabel={`Remove ${label}`}
+        accessibilityRole="button"
+        hitSlop={8}
+        onPress={() => onRemove(index)}
+        style={({ pressed }) => [styles.stagedRemoveButton, pressed ? styles.pressed : null]}
+      >
+        <Text style={styles.stagedRemoveText}>X</Text>
+      </Pressable>
+    </View>
+  )
+}
+
+function StagedAttachmentTray({
+  attachments,
+  onClear,
+  onRemove,
+}: {
+  readonly attachments: readonly ContentPart[]
+  readonly onClear: () => void
+  readonly onRemove: (index: number) => void
+}) {
+  if (attachments.length === 0) return null
+
+  return (
+    <View style={styles.stagedTray}>
+      <View style={styles.stagedTrayHeader}>
+        <Text style={styles.stagedTrayTitle}>
+          {attachments.length === 1 ? '1 attachment' : `${attachments.length} attachments`}
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={onClear}
+          style={({ pressed }) => [styles.clearStagedButton, pressed ? styles.pressed : null]}
+        >
+          <Text style={styles.clearStagedText}>Clear</Text>
+        </Pressable>
+      </View>
+      <ScrollView
+        horizontal
+        keyboardShouldPersistTaps="handled"
+        showsHorizontalScrollIndicator={false}
+        style={styles.stagedScroller}
+      >
+        {attachments.map((part, index) => (
+          <StagedAttachmentPreview
+            index={index}
+            key={getStagedAttachmentKey(part, index)}
+            onRemove={onRemove}
+            part={part}
+          />
+        ))}
+      </ScrollView>
+    </View>
+  )
+}
+
 function MessageBubble({ message }: { message: Message }) {
   const isUser = message.role === 'user'
   const isAssistant = message.role === 'assistant'
   const text = getMessageText(message)
-  const displayText = text.trim() === '' && isAssistant ? 'Thinking...' : text
+  const thinking = isAssistant ? getThinkingDetail(message.thinking) : null
+  const images = getImageParts(message)
+  const hasAnswer = text.trim() !== ''
+  const displayText = hasAnswer ? text : 'Thinking...'
+  const showAnswerText = hasAnswer || (isAssistant && thinking === null && images.length === 0)
 
   return (
     <View style={[styles.messageRow, isUser ? styles.messageRowUser : styles.messageRowAssistant]}>
@@ -167,9 +424,24 @@ function MessageBubble({ message }: { message: Message }) {
             <Text style={styles.messageRoute}>{PROVIDER_LABELS[message.routeDecision.provider]}</Text>
           )}
         </View>
-        <Text style={[styles.messageText, isUser ? styles.userMessageText : null]}>
-          {displayText}
-        </Text>
+        {thinking === null ? null : <ThinkingDisclosure thinking={thinking} />}
+        {images.length === 0 ? null : (
+          <View style={styles.messageImageGrid}>
+            {images.map((part, index) => (
+              <Image
+                key={`${part.uri}-${index}`}
+                resizeMode="cover"
+                source={{ uri: part.uri }}
+                style={styles.messageImage}
+              />
+            ))}
+          </View>
+        )}
+        {showAnswerText ? (
+          <Text style={[styles.messageText, isUser ? styles.userMessageText : null]}>
+            {displayText}
+          </Text>
+        ) : null}
         {message.routeDecision === undefined ? null : (
           <Text style={styles.routeDetail}>
             {message.routeDecision.label} · {Math.round(message.routeDecision.latencyMs)}ms
@@ -191,6 +463,10 @@ export default function Chat() {
   const setDraft = useStore((s) => s.setDraft)
   const sendUserMessage = useStore((s) => s.sendUserMessage)
   const loadModel = useStore((s) => s.loadModel)
+  const stagedAttachments = useStore((s) => s.stagedAttachments)
+  const stageAttachment = useStore((s) => s.stageAttachment)
+  const removeStagedAttachment = useStore((s) => s.removeStagedAttachment)
+  const clearStaged = useStore((s) => s.clearStaged)
   const generationStatus = useStore((s) => s.generationStatus)
   const modelStatus = useStore((s) => s.modelStatus)
   const modelError = useStore((s) => s.modelError)
@@ -201,7 +477,8 @@ export default function Chat() {
   const setModelSize = useStore((s) => s.setModelSize)
 
   const generationActive = isGenerationActive(generationStatus)
-  const canSend = draft.trim().length > 0 && !generationActive
+  const hasComposerContent = draft.trim().length > 0 || stagedAttachments.length > 0
+  const canSend = hasComposerContent && !generationActive
   const modelDetail = useMemo(
     () => getModelDetail(modelStatus, modelSize, downloadBytes, modelError),
     [downloadBytes, modelError, modelSize, modelStatus],
@@ -219,6 +496,106 @@ export default function Chat() {
       setActionError('Could not send that message.')
     })
   }, [canSend, sendUserMessage])
+
+  const handlePickImage = useCallback(() => {
+    setActionError(null)
+
+    void (async () => {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync()
+      if (!permission.granted) {
+        setActionError(permission.canAskAgain
+          ? 'Photo library access is needed to attach images.'
+          : 'Photo library access is disabled in Settings.')
+        return
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        allowsMultipleSelection: true,
+        mediaTypes: ['images'],
+        quality: 0.9,
+        selectionLimit: 6,
+      })
+
+      if (result.canceled) return
+
+      const imageAssets = result.assets.filter((asset) => (
+        asset.uri.trim() !== '' &&
+        (asset.type === undefined ||
+          asset.type === null ||
+          asset.type === 'image' ||
+          asset.mimeType?.startsWith('image/') === true)
+      ))
+
+      if (imageAssets.length === 0) {
+        setActionError('Choose an image file to attach.')
+        return
+      }
+
+      imageAssets.forEach((asset) => {
+        stageAttachment({
+          type: 'image',
+          uri: asset.uri,
+          name: asset.fileName ?? undefined,
+          mimeType: asset.mimeType ?? undefined,
+          width: asset.width,
+          height: asset.height,
+        })
+      })
+    })().catch(() => {
+      setActionError('Could not attach that image.')
+    })
+  }, [stageAttachment])
+
+  const handlePickFile = useCallback(() => {
+    setActionError(null)
+
+    void (async () => {
+      const result = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        multiple: true,
+        type: [
+          'image/*',
+          'text/*',
+          'application/json',
+          'application/xml',
+          'application/yaml',
+          'application/x-yaml',
+        ],
+      })
+
+      if (result.canceled) return
+
+      const failures: string[] = []
+      for (const asset of result.assets) {
+        try {
+          if (asset.mimeType?.startsWith('image/') === true) {
+            stageAttachment({
+              type: 'image',
+              uri: asset.uri,
+              name: asset.name,
+              mimeType: asset.mimeType,
+            })
+            continue
+          }
+
+          stageAttachment(await textPartFromDocument(asset))
+        } catch (error) {
+          failures.push(error instanceof Error ? error.message : String(error))
+        }
+      }
+
+      if (failures.length > 0) {
+        setActionError(failures[0] ?? 'Could not attach that file.')
+      }
+    })().catch(() => {
+      setActionError('Could not attach that file.')
+    })
+  }, [stageAttachment])
+
+  const handleRemoveStagedAttachment = useCallback((index: number) => {
+    setActionError(null)
+    removeStagedAttachment(index)
+  }, [removeStagedAttachment])
 
   const handleCancel = useCallback(() => {
     setActionError(null)
@@ -324,14 +701,12 @@ export default function Chat() {
 
       <View style={[styles.composerWrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
         {actionError === null ? null : <Text style={styles.errorText}>{actionError}</Text>}
+        <StagedAttachmentTray
+          attachments={stagedAttachments}
+          onClear={clearStaged}
+          onRemove={handleRemoveStagedAttachment}
+        />
         <View style={styles.composer}>
-          <Pressable
-            accessibilityRole="button"
-            disabled
-            style={[styles.micButton, styles.disabledControl]}
-          >
-            <Text style={styles.micButtonText}>Mic</Text>
-          </Pressable>
           <TextInput
             multiline
             value={draft}
@@ -344,28 +719,55 @@ export default function Chat() {
             style={styles.input}
             textAlignVertical="top"
           />
-          {generationActive ? (
-            <Pressable
-              accessibilityRole="button"
-              onPress={handleCancel}
-              style={({ pressed }) => [styles.cancelButton, pressed ? styles.pressed : null]}
-            >
-              <Text style={styles.cancelButtonText}>Stop</Text>
-            </Pressable>
-          ) : (
-            <Pressable
-              accessibilityRole="button"
-              disabled={!canSend}
-              onPress={handleSend}
-              style={({ pressed }) => [
-                styles.sendButton,
-                !canSend ? styles.disabledSendButton : null,
-                pressed ? styles.pressed : null,
-              ]}
-            >
-              <Text style={[styles.sendButtonText, !canSend ? styles.disabledSendButtonText : null]}>Send</Text>
-            </Pressable>
-          )}
+          <View style={styles.composerActions}>
+            <View style={styles.attachmentActions}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={handlePickImage}
+                style={({ pressed }) => [styles.attachmentButton, pressed ? styles.pressed : null]}
+              >
+                <Text style={styles.attachmentButtonText}>Photo</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={handlePickFile}
+                style={({ pressed }) => [styles.attachmentButton, pressed ? styles.pressed : null]}
+              >
+                <Text style={styles.attachmentButtonText}>File</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: true }}
+                disabled
+                style={[styles.attachmentButton, styles.placeholderAttachmentButton]}
+              >
+                <Text style={styles.placeholderAttachmentButtonText}>Mic</Text>
+              </Pressable>
+            </View>
+            {generationActive ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={handleCancel}
+                style={({ pressed }) => [styles.cancelButton, pressed ? styles.pressed : null]}
+              >
+                <Text style={styles.cancelButtonText}>Stop</Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !canSend }}
+                disabled={!canSend}
+                onPress={handleSend}
+                style={({ pressed }) => [
+                  styles.sendButton,
+                  !canSend ? styles.disabledSendButton : null,
+                  pressed ? styles.pressed : null,
+                ]}
+              >
+                <Text style={[styles.sendButtonText, !canSend ? styles.disabledSendButtonText : null]}>Send</Text>
+              </Pressable>
+            )}
+          </View>
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -591,6 +993,18 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 21,
   },
+  messageImageGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 8,
+  },
+  messageImage: {
+    backgroundColor: '#0a0d13',
+    borderRadius: 8,
+    height: 124,
+    width: 124,
+  },
   userMessageText: {
     color: '#f6fffb',
   },
@@ -598,6 +1012,46 @@ const styles = StyleSheet.create({
     color: '#7f8aa0',
     fontSize: 11,
     marginTop: 7,
+  },
+  thinkingPanel: {
+    backgroundColor: '#101722',
+    borderColor: '#283345',
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 8,
+    overflow: 'hidden',
+  },
+  thinkingToggle: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    minHeight: 34,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  thinkingToggleStatic: {
+    opacity: 0.8,
+  },
+  thinkingStatus: {
+    color: '#b9c5d8',
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  thinkingToggleText: {
+    color: '#8be9d4',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  thinkingText: {
+    borderColor: '#263145',
+    borderTopWidth: 1,
+    color: '#aab5c8',
+    fontSize: 13,
+    lineHeight: 19,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
   },
   composerWrap: {
     borderColor: '#1c2230',
@@ -611,39 +1065,145 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     paddingHorizontal: 6,
   },
-  composer: {
-    alignItems: 'flex-end',
+  stagedTray: {
     backgroundColor: '#10141d',
     borderColor: '#283044',
     borderRadius: 8,
     borderWidth: 1,
+    marginBottom: 8,
+    padding: 8,
+  },
+  stagedTrayHeader: {
+    alignItems: 'center',
     flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  stagedTrayTitle: {
+    color: '#b9c5d8',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  clearStagedButton: {
+    minHeight: 28,
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  clearStagedText: {
+    color: '#8be9d4',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  stagedScroller: {
+    marginHorizontal: -2,
+  },
+  stagedAttachment: {
+    backgroundColor: '#161b26',
+    borderColor: '#30384a',
+    borderRadius: 8,
+    borderWidth: 1,
+    marginHorizontal: 2,
+    marginRight: 8,
+    minHeight: 76,
+    overflow: 'hidden',
+    position: 'relative',
+    width: 108,
+  },
+  stagedImage: {
+    backgroundColor: '#0a0d13',
+    height: 50,
+    width: '100%',
+  },
+  stagedFilePreview: {
+    alignItems: 'center',
+    backgroundColor: '#202737',
+    height: 50,
+    justifyContent: 'center',
+    width: '100%',
+  },
+  stagedFilePreviewText: {
+    color: '#b9c5d8',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  stagedAttachmentLabel: {
+    color: '#dce3ef',
+    fontSize: 12,
+    fontWeight: '700',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  stagedRemoveButton: {
+    alignItems: 'center',
+    backgroundColor: '#10141d',
+    borderColor: '#384255',
+    borderRadius: 8,
+    borderWidth: 1,
+    height: 24,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: 4,
+    top: 4,
+    width: 24,
+  },
+  stagedRemoveText: {
+    color: '#f3f6fb',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  composer: {
+    backgroundColor: '#10141d',
+    borderColor: '#283044',
+    borderRadius: 8,
+    borderWidth: 1,
     gap: 8,
     minHeight: 56,
     padding: 8,
   },
-  micButton: {
+  composerActions: {
     alignItems: 'center',
-    borderColor: '#30384a',
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'space-between',
+  },
+  attachmentActions: {
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  attachmentButton: {
+    alignItems: 'center',
+    backgroundColor: '#171d29',
+    borderColor: '#334053',
     borderRadius: 8,
     borderWidth: 1,
     height: 40,
     justifyContent: 'center',
-    width: 50,
+    minWidth: 56,
+    paddingHorizontal: 10,
   },
-  micButtonText: {
-    color: '#7f8798',
+  attachmentButtonText: {
+    color: '#dce3ef',
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '900',
+  },
+  placeholderAttachmentButton: {
+    opacity: 0.45,
+  },
+  placeholderAttachmentButtonText: {
+    color: '#9aa4b6',
+    fontSize: 13,
+    fontWeight: '900',
   },
   input: {
     color: '#f4f7fb',
-    flex: 1,
     fontSize: 16,
     lineHeight: 21,
-    maxHeight: 120,
-    minHeight: 40,
-    paddingHorizontal: 4,
+    maxHeight: 104,
+    minHeight: 44,
+    paddingBottom: 8,
+    paddingHorizontal: 8,
     paddingTop: Platform.OS === 'ios' ? 10 : 7,
   },
   sendButton: {
@@ -656,6 +1216,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minWidth: 72,
     paddingHorizontal: 15,
+    flexShrink: 0,
   },
   sendButtonText: {
     color: '#07110f',
@@ -679,16 +1240,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minWidth: 58,
     paddingHorizontal: 13,
+    flexShrink: 0,
   },
   cancelButtonText: {
     color: '#ffd8de',
     fontSize: 14,
     fontWeight: '900',
-  },
-  disabledControl: {
-    opacity: 0.45,
-  },
-  disabledText: {
-    color: '#51605e',
   },
 })

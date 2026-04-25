@@ -29,9 +29,11 @@ type GenerateOptions = {
 
 type StreamState = {
   readonly messageId: string
-  buffer: string
+  contentBuffer: string
+  thinkingBuffer: string
   frameHandle: number | null
   emittedContent: string
+  emittedThinking: string
 }
 
 type LoadInFlight = {
@@ -68,12 +70,31 @@ const streamState = (messageId: string): StreamState => {
 
   const next: StreamState = {
     messageId,
-    buffer: '',
+    contentBuffer: '',
+    thinkingBuffer: '',
     frameHandle: null,
     emittedContent: '',
+    emittedThinking: '',
   }
   streams.set(messageId, next)
   return next
+}
+
+const hasBufferedStream = (state: StreamState): boolean =>
+  state.contentBuffer !== '' || state.thinkingBuffer !== ''
+
+const flushStreamChunk = (state: StreamState): void => {
+  if (state.thinkingBuffer !== '') {
+    const chunk = state.thinkingBuffer.slice(0, STREAMING.MAX_CHUNK_PER_FLUSH)
+    state.thinkingBuffer = state.thinkingBuffer.slice(chunk.length)
+    storeApi.get().appendThinkingChunk(state.messageId, chunk)
+  }
+
+  if (state.contentBuffer !== '') {
+    const chunk = state.contentBuffer.slice(0, STREAMING.MAX_CHUNK_PER_FLUSH)
+    state.contentBuffer = state.contentBuffer.slice(chunk.length)
+    storeApi.get().appendStreamingChunk(state.messageId, chunk)
+  }
 }
 
 const flushStream = (messageId: string): void => {
@@ -81,13 +102,11 @@ const flushStream = (messageId: string): void => {
   if (state === undefined) return
 
   state.frameHandle = null
-  if (state.buffer === '') return
+  if (!hasBufferedStream(state)) return
 
-  const chunk = state.buffer.slice(0, STREAMING.MAX_CHUNK_PER_FLUSH)
-  state.buffer = state.buffer.slice(chunk.length)
-  storeApi.get().appendStreamingChunk(messageId, chunk)
+  flushStreamChunk(state)
 
-  if (state.buffer !== '') {
+  if (hasBufferedStream(state)) {
     state.frameHandle = scheduleFrame(() => flushStream(messageId))
   }
 }
@@ -95,7 +114,16 @@ const flushStream = (messageId: string): void => {
 const appendBuffered = (messageId: string, chunk: string): void => {
   if (chunk === '') return
   const state = streamState(messageId)
-  state.buffer += chunk
+  state.contentBuffer += chunk
+  if (state.frameHandle === null) {
+    state.frameHandle = scheduleFrame(() => flushStream(messageId))
+  }
+}
+
+const appendThinkingBuffered = (messageId: string, chunk: string): void => {
+  if (chunk === '') return
+  const state = streamState(messageId)
+  state.thinkingBuffer += chunk
   if (state.frameHandle === null) {
     state.frameHandle = scheduleFrame(() => flushStream(messageId))
   }
@@ -106,7 +134,10 @@ const finishStream = (messageId: string): void => {
   if (state === undefined) return
   if (state.frameHandle !== null) cancelFrame(state.frameHandle)
   state.frameHandle = null
-  flushStream(messageId)
+  while (hasBufferedStream(state)) {
+    flushStreamChunk(state)
+  }
+  storeApi.get().markThinkingDone(messageId)
   streams.delete(messageId)
 }
 
@@ -138,10 +169,11 @@ const toLlamaContent = (parts: readonly ContentPart[]): string | RNLlamaMessageP
 
 const toLlamaMessage = (message: Message): RNLlamaOAICompatibleMessage | null => {
   if (message.role === 'tool') return null
+  const reasoningContent = message.thinking?.text
   return {
     role: message.role,
     content: toLlamaContent(message.parts),
-    ...(message.thinking === undefined ? {} : { reasoning_content: message.thinking }),
+    ...(reasoningContent === undefined || reasoningContent === '' ? {} : { reasoning_content: reasoningContent }),
   }
 }
 
@@ -198,23 +230,49 @@ const buildCompletionParams = (messageId: string): CompletionParams => ({
   n_predict: INFERENCE_CONFIG.N_PREDICT_MAX,
   stop: [...GEMMA_STOPS],
   jinja: true,
-  enable_thinking: false,
-  reasoning_format: 'none',
+  enable_thinking: true,
+  reasoning_format: 'auto',
+  thinking_budget_tokens: INFERENCE_CONFIG.THINKING_BUDGET_TOKENS,
+  thinking_budget_message: INFERENCE_CONFIG.THINKING_BUDGET_MESSAGE,
   parallel_tool_calls: false as unknown as object,
 })
 
-const appendTokenData = (messageId: string, token: TokenData): void => {
-  const state = streamState(messageId)
-  const accumulated = token.content ?? token.accumulated_text
+type TokenStreamActivity = 'content' | 'thinking' | 'none'
 
-  if (typeof accumulated === 'string' && accumulated.startsWith(state.emittedContent)) {
-    const delta = accumulated.slice(state.emittedContent.length)
-    state.emittedContent = accumulated
-    appendBuffered(messageId, delta)
-    return
+const appendCumulativeDelta = (
+  previous: string,
+  next: string | undefined,
+  append: (chunk: string) => void,
+): { emitted: string; changed: boolean } => {
+  if (next === undefined || next === previous) {
+    return { emitted: previous, changed: false }
   }
 
-  appendBuffered(messageId, token.token)
+  if (!next.startsWith(previous)) {
+    return { emitted: next, changed: false }
+  }
+
+  const delta = next.slice(previous.length)
+  append(delta)
+  return { emitted: next, changed: delta !== '' }
+}
+
+const appendTokenData = (messageId: string, token: TokenData): TokenStreamActivity => {
+  const state = streamState(messageId)
+
+  const content = appendCumulativeDelta(state.emittedContent, token.content, (chunk) => {
+    appendBuffered(messageId, chunk)
+  })
+  state.emittedContent = content.emitted
+
+  const thinking = appendCumulativeDelta(state.emittedThinking, token.reasoning_content, (chunk) => {
+    appendThinkingBuffered(messageId, chunk)
+  })
+  state.emittedThinking = thinking.emitted
+
+  if (content.changed || state.emittedContent !== '') return 'content'
+  if (thinking.changed) return 'thinking'
+  return 'none'
 }
 
 const stopActiveCompletion = async (): Promise<void> => {
@@ -297,8 +355,12 @@ const generateWithLoadedContext = async (messageId: string, signal: AbortSignal)
     .completion(
       buildCompletionParams(messageId),
       (_requestId, token) => {
-        storeApi.get()._setGenerationStatus('streaming')
-        appendTokenData(messageId, token)
+        const activity = appendTokenData(messageId, token)
+        if (activity === 'thinking') {
+          storeApi.get()._setGenerationStatus('thinking')
+        } else if (activity === 'content') {
+          storeApi.get()._setGenerationStatus('streaming')
+        }
       },
     )
     .catch((error) => clearRuntimeMarker().then(() => {
@@ -420,9 +482,12 @@ export const inferenceService = {
         await this.loadModel(state.modelSize)
       }
 
-      await generateWithLoadedContext(opts.messageId, opts.signal)
+      const result = await generateWithLoadedContext(opts.messageId, opts.signal)
       finishStream(opts.messageId)
-      state.commitStreamingMessage(opts.messageId)
+      state.commitStreamingMessage(opts.messageId, {
+        content: result.content,
+        thinking: result.reasoning_content,
+      })
       state._setGenerationStatus('done')
     } catch (error) {
       finishStream(opts.messageId)

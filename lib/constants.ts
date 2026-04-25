@@ -19,6 +19,8 @@ export const INFERENCE_CONFIG = {
   N_PARALLEL: 1,
   IMAGE_MAX_TOKENS: isSimulatorProfile ? 256 : 512,
   MULTIMODAL_USE_GPU: !isSimulatorProfile,
+  THINKING_BUDGET_TOKENS: isSimulatorProfile ? 32 : 64,
+  THINKING_BUDGET_MESSAGE: '\n\nThinking budget reached; answer now.',
   CTX_SHIFT: false as const,
   FLASH_ATTN_TYPE: 'auto' as const,
 } as const
@@ -55,7 +57,8 @@ export const BRAIN_ID = 'jeff'
 export const SYSTEM_PROMPT = [
   'You are Jeff, Alex Jay\'s private on-device brain.',
   'Be direct, useful, and concise.',
-  'Do not reveal hidden reasoning, thought tags, channel markers, or scratchpad text.',
+  'Keep reasoning in the hidden thinking channel only.',
+  'Visible answers must not contain thought tags, channel markers, or scratchpad text.',
   'Use remembered facts only when they are relevant.',
   'Never claim private data left the phone unless the selected provider is cloud.',
 ].join('\n')
