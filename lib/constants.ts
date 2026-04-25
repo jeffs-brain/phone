@@ -61,7 +61,7 @@ export const STREAMING = {
 } as const
 
 export const ROUTING = {
-  FASTINO_TIMEOUT_MS: 250,
+  FASTINO_TIMEOUT_MS: 2500,
   CONFIDENCE_BUMP_THRESHOLD: 0.6,
 } as const
 

@@ -35,6 +35,7 @@ yarn-error.*
 !.env.example
 
 # Credentials safety net (belt + braces; .env above should catch these)
+AGENTS.md
 credentials.md
 credentials.json
 *.credentials.*
