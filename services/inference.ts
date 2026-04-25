@@ -1,61 +1,442 @@
+import {
+  initLlama,
+  type CompletionParams,
+  type LlamaContext,
+  type NativeCompletionResult,
+  type RNLlamaMessagePart,
+  type RNLlamaOAICompatibleMessage,
+  type TokenData,
+} from 'llama.rn'
+
+import { GEMMA_STOPS, INFERENCE_CONFIG, MEMORY_PRECONTEXT, STREAMING, SYSTEM_PROMPT } from '../lib/constants'
 import { storeApi } from '../store'
+import type { ModelId } from '../store/slices/inference'
+import type { ContentPart, Message, ProviderId } from '../store/types'
+import { ensureModelFile, ensureProjectorFile } from './model-assets'
+import { clearRuntimeMarker, writeRuntimeMarker } from './runtime-marker'
 
-let buffer = ''
-let flushHandle: number | null = null
-let activeMessageId: string | null = null
-
-const flush = () => {
-  flushHandle = null
-  if (!buffer || !activeMessageId) return
-  const chunk = buffer
-  buffer = ''
-  storeApi.get().appendStreamingChunk(activeMessageId, chunk)
+type LoadedContext = {
+  readonly id: ModelId
+  readonly context: LlamaContext
+  readonly multimodalReady: boolean
 }
 
-const scheduleFlush = () => {
-  if (flushHandle !== null) return
-  flushHandle = requestAnimationFrame(flush)
+type GenerateOptions = {
+  readonly messageId: string
+  readonly provider: ProviderId
+  readonly signal: AbortSignal
 }
 
-export type GenerateOptions = {
-  messageId: string
-  signal: AbortSignal
+type StreamState = {
+  readonly messageId: string
+  buffer: string
+  frameHandle: number | null
+  emittedContent: string
+}
+
+type LoadInFlight = {
+  readonly id: ModelId
+  readonly promise: Promise<void>
+}
+
+type CompletionRequest = Awaited<ReturnType<LlamaContext['parallel']['completion']>>
+
+let loaded: LoadedContext | null = null
+let loadInFlight: LoadInFlight | null = null
+let multimodalInFlight: Promise<void> | null = null
+let activeCompletion: CompletionRequest | null = null
+const streams = new Map<string, StreamState>()
+
+const scheduleFrame = (callback: () => void): number => {
+  if (typeof requestAnimationFrame === 'function') {
+    return requestAnimationFrame(() => callback())
+  }
+  return setTimeout(callback, 16) as unknown as number
+}
+
+const cancelFrame = (handle: number): void => {
+  if (typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(handle)
+    return
+  }
+  clearTimeout(handle)
+}
+
+const streamState = (messageId: string): StreamState => {
+  const existing = streams.get(messageId)
+  if (existing !== undefined) return existing
+
+  const next: StreamState = {
+    messageId,
+    buffer: '',
+    frameHandle: null,
+    emittedContent: '',
+  }
+  streams.set(messageId, next)
+  return next
+}
+
+const flushStream = (messageId: string): void => {
+  const state = streams.get(messageId)
+  if (state === undefined) return
+
+  state.frameHandle = null
+  if (state.buffer === '') return
+
+  const chunk = state.buffer.slice(0, STREAMING.MAX_CHUNK_PER_FLUSH)
+  state.buffer = state.buffer.slice(chunk.length)
+  storeApi.get().appendStreamingChunk(messageId, chunk)
+
+  if (state.buffer !== '') {
+    state.frameHandle = scheduleFrame(() => flushStream(messageId))
+  }
+}
+
+const appendBuffered = (messageId: string, chunk: string): void => {
+  if (chunk === '') return
+  const state = streamState(messageId)
+  state.buffer += chunk
+  if (state.frameHandle === null) {
+    state.frameHandle = scheduleFrame(() => flushStream(messageId))
+  }
+}
+
+const finishStream = (messageId: string): void => {
+  const state = streams.get(messageId)
+  if (state === undefined) return
+  if (state.frameHandle !== null) cancelFrame(state.frameHandle)
+  state.frameHandle = null
+  flushStream(messageId)
+  streams.delete(messageId)
+}
+
+const textFromParts = (parts: readonly ContentPart[]): string =>
+  parts
+    .filter((part): part is Extract<ContentPart, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text)
+    .join('\n')
+
+const toLlamaContent = (parts: readonly ContentPart[]): string | RNLlamaMessagePart[] => {
+  const mediaParts = parts
+    .filter((part): part is Extract<ContentPart, { type: 'image' | 'audio' }> =>
+      part.type === 'image' || part.type === 'audio',
+    )
+    .map((part): RNLlamaMessagePart =>
+      part.type === 'image'
+        ? { type: 'image_url', image_url: { url: part.uri } }
+        : { type: 'input_audio', input_audio: { url: part.uri, format: 'wav' } },
+    )
+
+  if (mediaParts.length === 0) return textFromParts(parts)
+
+  const text = textFromParts(parts)
+  return [
+    ...(text.trim() === '' ? [] : [{ type: 'text' as const, text }]),
+    ...mediaParts,
+  ]
+}
+
+const toLlamaMessage = (message: Message): RNLlamaOAICompatibleMessage | null => {
+  if (message.role === 'tool') return null
+  return {
+    role: message.role,
+    content: toLlamaContent(message.parts),
+    ...(message.thinking === undefined ? {} : { reasoning_content: message.thinking }),
+  }
+}
+
+const isMediaPart = (part: ContentPart): part is Extract<ContentPart, { type: 'image' | 'audio' }> =>
+  part.type === 'image' || part.type === 'audio'
+
+const messageRequiresMultimodal = (message: Message): boolean => message.parts.some(isMediaPart)
+
+const currentContextRequiresMultimodal = (): boolean => storeApi.get().messages.some(messageRequiresMultimodal)
+
+const setAssetProgress = (stage: 'checking' | 'available' | 'downloading' | 'verifying' | 'downloaded', bytes: {
+  readonly received: number
+  readonly total: number
+}): void => {
+  const state = storeApi.get()
+  if (stage === 'checking') {
+    state._setModelStatus('checking')
+  } else if (stage === 'verifying') {
+    state._setModelStatus('verifying')
+  } else if (stage === 'downloading') {
+    state._setModelStatus('downloading')
+  } else if (stage === 'available' || stage === 'downloaded') {
+    state._setModelStatus('loaded')
+  }
+
+  state._setDownloadBytes(bytes)
+}
+
+const buildSystemPrompt = (): string => {
+  const hits = storeApi.get().preContextHits.slice(0, MEMORY_PRECONTEXT.TOP_K)
+  if (hits.length === 0) return SYSTEM_PROMPT
+
+  const memoryBlock = hits
+    .map((hit, index) => `${index + 1}. ${hit.text.slice(0, MEMORY_PRECONTEXT.SNIPPET_MAX_CHARS)}`)
+    .join('\n')
+
+  return `${SYSTEM_PROMPT}\n\nRelevant memories:\n${memoryBlock}`
+}
+
+const buildMessages = (activeAssistantId: string): RNLlamaOAICompatibleMessage[] => {
+  const historical = storeApi
+    .get()
+    .messages
+    .filter((message) => message.id !== activeAssistantId)
+    .map(toLlamaMessage)
+    .filter((message): message is RNLlamaOAICompatibleMessage => message !== null)
+
+  return [{ role: 'system', content: buildSystemPrompt() }, ...historical]
+}
+
+const buildCompletionParams = (messageId: string): CompletionParams => ({
+  messages: buildMessages(messageId),
+  n_threads: INFERENCE_CONFIG.N_THREADS,
+  n_predict: INFERENCE_CONFIG.N_PREDICT_MAX,
+  stop: [...GEMMA_STOPS],
+  jinja: true,
+  enable_thinking: false,
+  reasoning_format: 'none',
+  parallel_tool_calls: false as unknown as object,
+})
+
+const appendTokenData = (messageId: string, token: TokenData): void => {
+  const state = streamState(messageId)
+  const accumulated = token.content ?? token.accumulated_text
+
+  if (typeof accumulated === 'string' && accumulated.startsWith(state.emittedContent)) {
+    const delta = accumulated.slice(state.emittedContent.length)
+    state.emittedContent = accumulated
+    appendBuffered(messageId, delta)
+    return
+  }
+
+  appendBuffered(messageId, token.token)
+}
+
+const stopActiveCompletion = async (): Promise<void> => {
+  const request = activeCompletion
+  if (request === null) return
+  activeCompletion = null
+  await request.stop().catch(() => undefined)
+}
+
+const releaseLoadedContext = async (): Promise<void> => {
+  await stopActiveCompletion()
+  if (loaded === null) return
+  const context = loaded.context
+  loaded = null
+  multimodalInFlight = null
+  await context.parallel.disable().catch(() => undefined)
+  await context.releaseMultimodal().catch(() => undefined)
+  await context.release()
+}
+
+const ensureMultimodalReady = async (): Promise<void> => {
+  const current = loaded
+  if (current === null) throw new Error('Local Gemma is not loaded.')
+  if (current.multimodalReady) return
+  if (multimodalInFlight !== null) return multimodalInFlight
+
+  const promise = (async () => {
+    const assets = await ensureProjectorFile(current.id, (progress) => {
+      setAssetProgress(progress.stage, {
+        received: progress.bytesReceived,
+        total: progress.bytesExpected,
+      })
+    })
+
+    if (loaded?.context !== current.context) {
+      throw new Error('Local Gemma changed while the projector was loading.')
+    }
+
+    storeApi.get()._setModelStatus('initialised')
+    await writeRuntimeMarker({ modelId: current.id, stage: 'projector-load' })
+    const multimodalReady = await current.context.initMultimodal({
+      path: assets.projectorPath,
+      use_gpu: INFERENCE_CONFIG.MULTIMODAL_USE_GPU && current.context.gpu,
+      image_max_tokens: INFERENCE_CONFIG.IMAGE_MAX_TOKENS,
+    })
+    if (!multimodalReady) {
+      throw new Error('Gemma multimodal projector failed to initialise.')
+    }
+
+    loaded = { ...current, multimodalReady: true }
+    await clearRuntimeMarker()
+    storeApi.get()._setModelStatus('ready')
+  })().catch((error) => {
+    const message = error instanceof Error ? error.message : String(error)
+    const state = storeApi.get()
+    state._setModelError(message)
+    state._setModelStatus('error')
+    return clearRuntimeMarker().then(() => {
+      throw error
+    })
+  })
+
+  multimodalInFlight = promise
+  void promise.finally(() => {
+    if (multimodalInFlight === promise) multimodalInFlight = null
+  }).catch(() => undefined)
+  return promise
+}
+
+const generateWithLoadedContext = async (messageId: string, signal: AbortSignal): Promise<NativeCompletionResult> => {
+  if (loaded === null) throw new Error('Local Gemma is not loaded.')
+
+  if (currentContextRequiresMultimodal()) {
+    await ensureMultimodalReady()
+  }
+
+  if (loaded === null) throw new Error('Local Gemma is not loaded.')
+  await writeRuntimeMarker({ modelId: loaded.id, stage: 'generation' })
+  const request = await loaded.context.parallel
+    .completion(
+      buildCompletionParams(messageId),
+      (_requestId, token) => {
+        storeApi.get()._setGenerationStatus('streaming')
+        appendTokenData(messageId, token)
+      },
+    )
+    .catch((error) => clearRuntimeMarker().then(() => {
+      throw error
+    }))
+
+  const abort = (): void => {
+    void request.stop()
+  }
+  signal.addEventListener('abort', abort, { once: true })
+  activeCompletion = request
+
+  try {
+    return await request.promise
+  } finally {
+    if (activeCompletion === request) activeCompletion = null
+    signal.removeEventListener('abort', abort)
+    await clearRuntimeMarker()
+  }
+}
+
+const loadModelInternal = async (id: ModelId): Promise<void> => {
+  if (loaded?.id === id) return
+
+  const state = storeApi.get()
+  state._setModelId(id)
+  state._setModelStatus('checking')
+  state._setModelError(null)
+  state._setDownloadBytes(null)
+
+  try {
+    const assets = await ensureModelFile(id, (progress) => {
+      setAssetProgress(progress.stage, {
+        received: progress.bytesReceived,
+        total: progress.bytesExpected,
+      })
+    })
+
+    state._setModelStatus('loaded')
+    await releaseLoadedContext()
+
+    state._setModelStatus('initialised')
+    await writeRuntimeMarker({ modelId: id, stage: 'model-load' })
+    const context = await initLlama({
+      model: assets.modelPath,
+      n_ctx: INFERENCE_CONFIG.N_CTX,
+      n_batch: INFERENCE_CONFIG.N_BATCH,
+      n_ubatch: INFERENCE_CONFIG.N_UBATCH,
+      n_threads: INFERENCE_CONFIG.N_THREADS,
+      n_gpu_layers: INFERENCE_CONFIG.N_GPU_LAYERS,
+      n_parallel: INFERENCE_CONFIG.N_PARALLEL,
+      ctx_shift: INFERENCE_CONFIG.CTX_SHIFT,
+      flash_attn_type: INFERENCE_CONFIG.FLASH_ATTN_TYPE,
+      use_mlock: false,
+    })
+
+    const parallelReady = await context.parallel.enable({
+      n_parallel: INFERENCE_CONFIG.N_PARALLEL,
+      n_batch: INFERENCE_CONFIG.N_BATCH,
+    })
+    if (!parallelReady) {
+      await context.release()
+      throw new Error('llama.rn parallel queue failed to initialise.')
+    }
+
+    loaded = { id, context, multimodalReady: false }
+    await clearRuntimeMarker()
+    state._setDownloadBytes(null)
+    state._setModelStatus('ready')
+  } catch (error) {
+    await clearRuntimeMarker()
+    const message = error instanceof Error ? error.message : String(error)
+    state._setModelError(message)
+    state._setModelStatus('error')
+    throw error
+  }
+}
+
+const loadModelOnce = async (id: ModelId): Promise<void> => {
+  if (loaded?.id === id) return
+  if (loadInFlight?.id === id) return loadInFlight.promise
+  if (loadInFlight !== null) await loadInFlight.promise.catch(() => undefined)
+
+  const promise = loadModelInternal(id)
+  loadInFlight = { id, promise }
+  void promise.finally(() => {
+    if (loadInFlight?.promise === promise) loadInFlight = null
+  }).catch(() => undefined)
+  return promise
 }
 
 export const inferenceService = {
-  async loadModel(_id: 'gemma-4-E2B' | 'gemma-4-E4B'): Promise<void> {
-    // 1. download model + mmproj via expo-file-system, sha256-verify (fix the PoC bug)
-    // 2. await initLlama({ model, n_ctx, ctx_shift: false, n_gpu_layers: 99, flash_attn_type: 'auto' })
-    // 3. await ctx.initMultimodal({ path: mmprojPath, use_gpu: true })
-    // 4. await ctx.parallel.enable({ n_parallel: 4, n_batch: 512 })
+  async loadModel(id: ModelId): Promise<void> {
+    await loadModelOnce(id)
   },
 
   async unloadModel(): Promise<void> {
-    // await ctx.releaseMultimodal()
-    // await ctx.release()
+    await releaseLoadedContext()
+    const state = storeApi.get()
+    state._setModelId(null)
+    state._setModelError(null)
+    state._setDownloadBytes(null)
+    state._setModelStatus('unloaded')
   },
 
   async generate(opts: GenerateOptions): Promise<void> {
-    activeMessageId = opts.messageId
-    storeApi.get().beginAssistantMessage(opts.messageId)
-    storeApi.get()._setGenerationStatus('loading-first-token')
+    const state = storeApi.get()
+    state._setGenerationStatus('loading-first-token')
 
-    // Pseudo:
-    // const req = await ctx.parallel.completion({ messages, tools, tool_choice: 'auto', jinja: true }, (id, data) => {
-    //   if (data.token) {
-    //     buffer += data.token
-    //     scheduleFlush()
-    //   }
-    //   if (data.tool_calls) {
-    //     // emit into chat slice
-    //   }
-    // })
-    // opts.signal.addEventListener('abort', () => req.stop())
-    // const result = await req.promise
+    try {
+      if (opts.provider !== 'gemma-local') {
+        appendBuffered(
+          opts.messageId,
+          'That provider is not installed in this build yet, so I am answering with local Gemma.',
+        )
+      }
 
-    flush()
-    storeApi.get().commitStreamingMessage(opts.messageId)
-    storeApi.get()._setGenerationStatus('done')
-    activeMessageId = null
+      if (loaded === null) {
+        await this.loadModel(state.modelSize)
+      }
+
+      await generateWithLoadedContext(opts.messageId, opts.signal)
+      finishStream(opts.messageId)
+      state.commitStreamingMessage(opts.messageId)
+      state._setGenerationStatus('done')
+    } catch (error) {
+      finishStream(opts.messageId)
+      if (opts.signal.aborted) {
+        state.commitStreamingMessage(opts.messageId)
+        state._setGenerationStatus('idle')
+        return
+      }
+
+      const message = error instanceof Error ? error.message : String(error)
+      appendBuffered(opts.messageId, `Local inference failed: ${message}`)
+      finishStream(opts.messageId)
+      state.commitStreamingMessage(opts.messageId)
+      state._setGenerationStatus('error')
+    }
   },
 }

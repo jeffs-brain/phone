@@ -34,9 +34,7 @@ export const useStore = create<RootState>()(
             manualProvider: s.manualProvider,
             devMode: s.devMode,
           }),
-          onRehydrateStorage: () => (_state, error) => {
-            if (error) console.warn('[store] hydrate error', error)
-          },
+          onRehydrateStorage: () => () => undefined,
         },
       ),
     ),

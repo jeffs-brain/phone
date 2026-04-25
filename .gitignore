@@ -31,9 +31,8 @@ yarn-error.*
 *.pem
 
 # Local env files — never commit
-.env
-.env.local
-.env.*.local
+.env*
+!.env.example
 
 # Credentials safety net (belt + braces; .env above should catch these)
 credentials.md

@@ -16,7 +16,7 @@ const LABEL_TO_TIER: Record<string, Tier> = {
 }
 
 const TIER_TO_PROVIDER: Record<Tier, ProviderId> = {
-  small: 'apple-fm', // service.dispatch falls back to gemma-local if Apple FM unavailable
+  small: 'gemma-local',
   medium: 'gemma-local',
   large: 'cloud',
 }
@@ -30,10 +30,21 @@ const fetchWithTimeout = (url: string, init: RequestInit, timeoutMs: number): Pr
 }
 
 export const routerService = {
-  async classify(message: string, history: string[]): Promise<RouteDecision> {
+  manual(provider: ProviderId): RouteDecision {
+    return {
+      tier: provider === 'cloud' ? 'large' : 'medium',
+      provider,
+      label: 'manual',
+      confidence: 1,
+      latencyMs: 0,
+      routed: false,
+    }
+  },
+
+  async classify(message: string, history: string[], fallbackProvider: ProviderId): Promise<RouteDecision> {
     const start = performance.now()
     if (!FASTINO_API_KEY) {
-      return fallback('missing-key', start)
+      return fallback('missing-key', start, fallbackProvider)
     }
 
     try {
@@ -55,7 +66,7 @@ export const routerService = {
         }),
       }, FASTINO_TIMEOUT_MS)
 
-      if (!response.ok) return fallback(`http-${response.status}`, start)
+      if (!response.ok) return fallback(`http-${response.status}`, start, fallbackProvider)
       const data = await response.json()
       const classification = data?.output?.[0]?.classifications?.[0]
       const label: string = classification?.label ?? 'reasoning_or_code'
@@ -72,14 +83,14 @@ export const routerService = {
         routed: true,
       }
     } catch (e) {
-      return fallback(`exception:${(e as Error).name}`, start)
+      return fallback(`exception:${(e as Error).name}`, start, fallbackProvider)
     }
   },
 }
 
-const fallback = (reason: string, start: number): RouteDecision => ({
-  tier: 'medium',
-  provider: 'gemma-local',
+const fallback = (reason: string, start: number, provider: ProviderId): RouteDecision => ({
+  tier: provider === 'cloud' ? 'large' : 'medium',
+  provider,
   label: `fallback:${reason}`,
   confidence: 0,
   latencyMs: performance.now() - start,

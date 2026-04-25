@@ -1,17 +1,35 @@
 import { Platform } from 'react-native'
 
+export type LlamaRuntimeProfile = 'device' | 'simulator'
+
+const requestedLlamaProfile = process.env.EXPO_PUBLIC_LLAMA_PROFILE
+export const LLAMA_RUNTIME_PROFILE: LlamaRuntimeProfile =
+  requestedLlamaProfile === 'simulator' ? 'simulator' : 'device'
+
+const isSimulatorProfile = LLAMA_RUNTIME_PROFILE === 'simulator'
+
 export const INFERENCE_CONFIG = {
-  N_CTX: 4096,
-  N_PREDICT_MAX: 512,
-  N_BATCH: 512,
-  N_UBATCH: 128,
-  N_THREADS: Platform.OS === 'ios' ? 6 : 4,
+  PROFILE: LLAMA_RUNTIME_PROFILE,
+  N_CTX: isSimulatorProfile ? 2048 : 4096,
+  N_PREDICT_MAX: isSimulatorProfile ? 256 : 512,
+  N_BATCH: isSimulatorProfile ? 256 : 512,
+  N_UBATCH: isSimulatorProfile ? 64 : 128,
+  N_THREADS: Platform.OS === 'ios' ? (isSimulatorProfile ? 4 : 6) : 4,
   N_GPU_LAYERS: 99,
-  N_PARALLEL: 4,
-  IMAGE_MAX_TOKENS: 512,
+  N_PARALLEL: 1,
+  IMAGE_MAX_TOKENS: isSimulatorProfile ? 256 : 512,
+  MULTIMODAL_USE_GPU: !isSimulatorProfile,
   CTX_SHIFT: false as const,
   FLASH_ATTN_TYPE: 'auto' as const,
 } as const
+
+export const GEMMA_STOPS = [
+  '<end_of_turn>',
+  '<|end_of_turn|>',
+  '<|eot_id|>',
+  '<|im_end|>',
+  '<|endoftext|>',
+] as const
 
 export const TOOL_LIMITS = {
   MAX_ROUNDS: 3,
@@ -33,3 +51,11 @@ export const ROUTING = {
 } as const
 
 export const BRAIN_ID = 'jeff'
+
+export const SYSTEM_PROMPT = [
+  'You are Jeff, Alex Jay\'s private on-device brain.',
+  'Be direct, useful, and concise.',
+  'Do not reveal hidden reasoning, thought tags, channel markers, or scratchpad text.',
+  'Use remembered facts only when they are relevant.',
+  'Never claim private data left the phone unless the selected provider is cloud.',
+].join('\n')

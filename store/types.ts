@@ -40,6 +40,7 @@ export type Message = {
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool'
   parts: ContentPart[]
+  routeDecision?: RouteDecision
   thinking?: string
   toolCalls?: ToolCall[]
   createdAt: number

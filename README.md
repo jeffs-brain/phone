@@ -8,7 +8,7 @@ Built for the **Big Berlin Hack 2026** by [Alex Jay](https://github.com/jaythege
 
 ## Status
 
-🚧 **Scaffolded.** Project bootstrapped with the full stack of pinned dependencies, Zustand store skeleton, services skeletons, and partner credentials wired to `.env`. Implementation begins in the next session.
+🚧 **Phase 1 in progress.** Project bootstrapped with Bun, Expo SDK 55, the native dependency set, Zustand slices, Fastino routing, and a local Gemma service path with model download, SHA-256 verification, llama.rn initialisation, multimodal projector loading, and rAF-buffered streaming.
 
 ## The Stack
 
@@ -44,22 +44,22 @@ phone/
 
 ```bash
 # 1. Install dependencies (this also resolves the file:../memory/sdks/rn/memory link)
-npm install
+bun install
 
 # 2. Make sure the memory SDK is on the right branch + has a built dist/
-cd ../memory && git checkout feat/rn-sdk && npm install && npm run build && cd ../phone
+cd ../memory && git checkout feat/rn-sdk && bun install && bun run build && cd ../phone
 
 # 3. Configure environment
 cp .env.example .env
 # (edit .env with real keys — see hackathon partner dashboards)
 
 # 4. Run on iOS
-npm run ios
+bun run ios
 ```
 
 ## Architecture
 
-See `~/code/me/big-berlin-hack/plan.md` for the full plan, decisions, and demo strategy. Research notes for each architectural choice live in `~/code/me/big-berlin-hack/research/`.
+See `~/code/me/big-hack-berlin/plan.md` for the full plan, decisions, and demo strategy. Research notes for each architectural choice live in `~/code/me/big-hack-berlin/research/`.
 
 ## Security Notes
 
@@ -69,6 +69,6 @@ This is a public-source repo. The `.env` file is gitignored and so is `credentia
 
 This is a hackathon entry; PRs are welcome but the master branch is moving fast over the weekend of 25–26 April 2026.
 
-## License
+## Licence
 
 MIT (TBC).

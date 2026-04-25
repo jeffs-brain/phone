@@ -28,13 +28,13 @@ export const createVoiceSlice: Slice<VoiceSlice> = (set) => ({
   ttsCurrent: null,
 
   requestMicPermission: async () => {
-    // Delegates to services/voice.requestPermission
+    set({ micPermission: 'denied' }, false, 'voice/requestMicPermission')
   },
   startRecording: async () => {
-    // Delegates to services/voice.startCapture
+    set({ recording: false }, false, 'voice/startRecording')
   },
   stopRecording: async () => {
-    // Delegates to services/voice.stopCapture
+    set({ recording: false }, false, 'voice/stopRecording')
   },
 
   setAsrPartial: (asrPartial) => set({ asrPartial }, false, 'voice/setAsrPartial'),

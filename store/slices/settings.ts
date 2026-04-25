@@ -1,4 +1,5 @@
 import type { ModelId } from './inference'
+import { LLAMA_RUNTIME_PROFILE } from '../../lib/constants'
 import type { ProviderId, Slice } from '../types'
 
 export type ProviderMode = 'manual' | 'smart'
@@ -19,7 +20,7 @@ export type SettingsSlice = {
 }
 
 export const createSettingsSlice: Slice<SettingsSlice> = (set) => ({
-  modelSize: 'gemma-4-E4B',
+  modelSize: LLAMA_RUNTIME_PROFILE === 'simulator' ? 'gemma-4-E2B' : 'gemma-4-E4B',
   voiceEnabled: true,
   rememberConversation: true,
   providerMode: 'manual',

@@ -4,13 +4,9 @@
     "slug": "jeff-phone",
     "version": "0.0.1",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "scheme": "jeff",
-    "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
       "backgroundColor": "#0a0a0f"
     },
     "ios": {
@@ -23,12 +19,7 @@
       }
     },
     "android": {
-      "package": "ai.jeffsbrain.phone",
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0a0a0f"
-      },
-      "edgeToEdgeEnabled": true
+      "package": "ai.jeffsbrain.phone"
     },
     "plugins": [
       "expo-router",
