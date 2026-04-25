@@ -1,0 +1,9 @@
+You are auditing Apple on-device / Foundation Models feasibility for /Users/alexjay/code/jeffs-brain/phone. Read the repo plan at /Users/alexjay/code/me/big-hack-berlin/plan.md and inspect the phone app. Answer: can we realistically integrate Apple on-device LLM next, what library/native bridge is most viable, simulator vs real-device constraints, required iOS/App entitlement/config changes, and a concrete minimal implementation path. Use primary sources/official docs for current Apple/API facts if you need web research, and cite file paths you inspected. Do not edit files.
+
+---
+
+Please inspect the memory tool/inference round-trip in /Users/alexjay/code/jeffs-brain/phone for the error `Failed to parse messages: [json.exception.type_error.302] type must be string, but is null` after `memory_remember`. Do not edit files. Confirm which message/tool_call field can become null when passed back into llama.rn, cite file/lines, and suggest a minimal robust normalisation patch. Context: user prompt `my favorite food is octopus, remember that` produces `memory_remember failed`.
+
+---
+
+Please inspect the current store/UI flow in /Users/alexjay/code/jeffs-brain/phone and suggest where to wire TTS playback after assistant responses. Do not edit files. Need a robust minimal implementation: settings voice toggle already exists, mic STT implemented, we need Gradium TTS with a male default voice and not interfering with active generation/stop. Return files/lines and a proposed state shape/actions if needed.
