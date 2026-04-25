@@ -3,9 +3,7 @@ import {
   type CompletionParams,
   type LlamaContext,
   type NativeCompletionResult,
-  type RNLlamaMessagePart,
   type RNLlamaOAICompatibleMessage,
-  type TokenData,
   type ToolCall as LlamaToolCall,
 } from 'llama.rn'
 import type {
@@ -16,12 +14,19 @@ import type {
   StructuredRequest as SdkStructuredRequest,
 } from '@jeffs-brain/memory-react-native'
 
-import { GEMMA_STOPS, INFERENCE_CONFIG, STREAMING, SYSTEM_PROMPT, TOOL_LIMITS } from '../lib/constants'
+import { GEMMA_STOPS, INFERENCE_CONFIG, TOOL_LIMITS } from '../lib/constants'
 import { createId } from '../lib/id'
 import { storeApi } from '../store'
 import type { ModelId } from '../store/slices/inference'
-import type { ContentPart, Message, ProviderId } from '../store/types'
+import type { ProviderId } from '../store/types'
 import { cloudProviderService } from './cloud-provider'
+import {
+  buildCloudMessages as buildCloudMessageHistory,
+  buildLlamaMessages,
+  latestUserRequiresMultimodal,
+  latestUserText,
+} from './inference-messages'
+import { appendBuffered, appendTokenData, finishStream } from './inference-stream'
 import { MEMORY_TOOL_DEFINITIONS, MemoryToolArgumentError, memoryService } from './memory'
 import { ensureModelFile, ensureProjectorFile } from './model-assets'
 import { clearRuntimeMarker, isSimulatorMultimodalGpuAutoDisabled, writeRuntimeMarker } from './runtime-marker'
@@ -36,15 +41,6 @@ type GenerateOptions = {
   readonly messageId: string
   readonly provider: ProviderId
   readonly signal: AbortSignal
-}
-
-type StreamState = {
-  readonly messageId: string
-  contentBuffer: string
-  thinkingBuffer: string
-  frameHandle: number | null
-  emittedContent: string
-  emittedThinking: string
 }
 
 type LoadInFlight = {
@@ -92,7 +88,6 @@ let loaded: LoadedContext | null = null
 let loadInFlight: LoadInFlight | null = null
 let multimodalInFlight: Promise<void> | null = null
 let activeCompletion: CompletionRequest | null = null
-const streams = new Map<string, StreamState>()
 const SIMULATOR_VISION_DISABLED_MESSAGE = [
   'I can attach and preview that image, but this simulator profile is running text-only Gemma.',
   'Remove EXPO_PUBLIC_SIMULATOR_VISION=disabled to run the local vision projector in iOS Simulator.',
@@ -103,199 +98,6 @@ const CLOUD_SYSTEM_PROMPT = [
   'This response is being produced by the selected cloud provider, so do not claim that this specific answer ran on-device.',
   'You do not have direct access to the phone memory tools in this cloud turn unless memory text appears in the prompt.',
 ].join('\n')
-
-const scheduleFrame = (callback: () => void): number => {
-  if (typeof requestAnimationFrame === 'function') {
-    return requestAnimationFrame(() => callback())
-  }
-  return setTimeout(callback, 16) as unknown as number
-}
-
-const cancelFrame = (handle: number): void => {
-  if (typeof cancelAnimationFrame === 'function') {
-    cancelAnimationFrame(handle)
-    return
-  }
-  clearTimeout(handle)
-}
-
-const streamState = (messageId: string): StreamState => {
-  const existing = streams.get(messageId)
-  if (existing !== undefined) return existing
-
-  const next: StreamState = {
-    messageId,
-    contentBuffer: '',
-    thinkingBuffer: '',
-    frameHandle: null,
-    emittedContent: '',
-    emittedThinking: '',
-  }
-  streams.set(messageId, next)
-  return next
-}
-
-const hasBufferedStream = (state: StreamState): boolean =>
-  state.contentBuffer !== '' || state.thinkingBuffer !== ''
-
-const flushStreamChunk = (state: StreamState): void => {
-  if (state.thinkingBuffer !== '') {
-    const chunk = state.thinkingBuffer.slice(0, STREAMING.MAX_CHUNK_PER_FLUSH)
-    state.thinkingBuffer = state.thinkingBuffer.slice(chunk.length)
-    storeApi.get().appendThinkingChunk(state.messageId, chunk)
-  }
-
-  if (state.contentBuffer !== '') {
-    const chunk = state.contentBuffer.slice(0, STREAMING.MAX_CHUNK_PER_FLUSH)
-    state.contentBuffer = state.contentBuffer.slice(chunk.length)
-    storeApi.get().appendStreamingChunk(state.messageId, chunk)
-  }
-}
-
-const flushStream = (messageId: string): void => {
-  const state = streams.get(messageId)
-  if (state === undefined) return
-
-  state.frameHandle = null
-  if (!hasBufferedStream(state)) return
-
-  flushStreamChunk(state)
-
-  if (hasBufferedStream(state)) {
-    state.frameHandle = scheduleFrame(() => flushStream(messageId))
-  }
-}
-
-const appendBuffered = (messageId: string, chunk: string): void => {
-  if (chunk === '') return
-  const state = streamState(messageId)
-  state.contentBuffer += chunk
-  if (state.frameHandle === null) {
-    state.frameHandle = scheduleFrame(() => flushStream(messageId))
-  }
-}
-
-const appendThinkingBuffered = (messageId: string, chunk: string): void => {
-  if (chunk === '') return
-  const state = streamState(messageId)
-  state.thinkingBuffer += chunk
-  if (state.frameHandle === null) {
-    state.frameHandle = scheduleFrame(() => flushStream(messageId))
-  }
-}
-
-const finishStream = (messageId: string): void => {
-  const state = streams.get(messageId)
-  if (state === undefined) return
-  if (state.frameHandle !== null) cancelFrame(state.frameHandle)
-  state.frameHandle = null
-  while (hasBufferedStream(state)) {
-    flushStreamChunk(state)
-  }
-  storeApi.get().markThinkingDone(messageId)
-  streams.delete(messageId)
-}
-
-const textFromParts = (parts: readonly ContentPart[]): string =>
-  parts
-    .filter((part): part is Extract<ContentPart, { type: 'text' }> => part.type === 'text')
-    .map((part) => part.text)
-    .join('\n')
-
-const mediaPlaceholder = (parts: readonly ContentPart[]): string | null => {
-  const hasImage = parts.some((part) => part.type === 'image')
-  const hasAudio = parts.some((part) => part.type === 'audio')
-  if (!hasImage && !hasAudio) return null
-  if (hasImage && hasAudio) return '[Image and audio attachments omitted on this simulator profile.]'
-  if (hasImage) return '[Image attachment omitted on this simulator profile.]'
-  return '[Audio attachment omitted on this simulator profile.]'
-}
-
-const cloudMediaPlaceholder = (parts: readonly ContentPart[]): string | null => {
-  const hasImage = parts.some((part) => part.type === 'image')
-  const hasAudio = parts.some((part) => part.type === 'audio')
-  if (!hasImage && !hasAudio) return null
-  if (hasImage && hasAudio) return '[Image and audio attachments were not sent to the cloud provider.]'
-  if (hasImage) return '[Image attachment was not sent to the cloud provider.]'
-  return '[Audio attachment was not sent to the cloud provider.]'
-}
-
-const toLlamaContent = (
-  parts: readonly ContentPart[],
-  includeMedia: boolean,
-): string | RNLlamaMessagePart[] => {
-  if (!includeMedia) {
-    return [textFromParts(parts).trim(), mediaPlaceholder(parts)]
-      .filter((part): part is string => part !== null && part !== '')
-      .join('\n\n')
-  }
-
-  const mediaParts = parts
-    .filter((part): part is Extract<ContentPart, { type: 'image' | 'audio' }> =>
-      part.type === 'image' || part.type === 'audio',
-    )
-    .map((part): RNLlamaMessagePart =>
-      part.type === 'image'
-        ? { type: 'image_url', image_url: { url: part.uri } }
-        : { type: 'input_audio', input_audio: { url: part.uri, format: 'wav' } },
-    )
-
-  if (mediaParts.length === 0) return textFromParts(parts)
-
-  const text = textFromParts(parts)
-  return [
-    ...(text.trim() === '' ? [] : [{ type: 'text' as const, text }]),
-    ...mediaParts,
-  ]
-}
-
-const toLlamaMessage = (
-  message: Message,
-  includeMediaForMessage: boolean,
-): RNLlamaOAICompatibleMessage | null => {
-  if (message.role === 'tool') return null
-  const reasoningContent = message.thinking?.text
-  return {
-    role: message.role,
-    content: toLlamaContent(message.parts, includeMediaForMessage),
-    ...(reasoningContent === undefined || reasoningContent === '' ? {} : { reasoning_content: reasoningContent }),
-  }
-}
-
-const isMediaPart = (part: ContentPart): part is Extract<ContentPart, { type: 'image' | 'audio' }> =>
-  part.type === 'image' || part.type === 'audio'
-
-const messageRequiresMultimodal = (message: Message): boolean => message.parts.some(isMediaPart)
-
-const currentContextRequiresMultimodal = (): boolean => storeApi.get().messages.some(messageRequiresMultimodal)
-
-const latestUserRequiresMultimodal = (): boolean => {
-  const messages = storeApi.get().messages
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
-    if (message?.role === 'user') return messageRequiresMultimodal(message)
-  }
-  return false
-}
-
-const latestUserMediaMessageId = (): string | null => {
-  const messages = storeApi.get().messages
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
-    if (message?.role !== 'user') continue
-    return messageRequiresMultimodal(message) ? message.id : null
-  }
-  return null
-}
-
-const latestUserText = (): string => {
-  const messages = storeApi.get().messages
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
-    if (message?.role === 'user') return textFromParts(message.parts)
-  }
-  return ''
-}
 
 const setAssetProgress = (stage: 'checking' | 'available' | 'downloading' | 'verifying' | 'downloaded', bytes: {
   readonly received: number
@@ -315,36 +117,11 @@ const setAssetProgress = (stage: 'checking' | 'available' | 'downloading' | 'ver
   state._setDownloadBytes(bytes)
 }
 
-const buildMessages = (activeAssistantId: string, includeMedia: boolean): RNLlamaOAICompatibleMessage[] => {
-  const mediaMessageId = includeMedia ? latestUserMediaMessageId() : null
-  const historical = storeApi
-    .get()
-    .messages
-    .filter((message) => message.id !== activeAssistantId)
-    .map((message) => toLlamaMessage(message, message.id === mediaMessageId))
-    .filter((message): message is RNLlamaOAICompatibleMessage => message !== null)
-
-  return [{ role: 'system', content: SYSTEM_PROMPT }, ...historical]
-}
-
-const toCloudMessage = (message: Message): SdkMessage | null => {
-  if (message.role === 'tool') return null
-  const text = textFromParts(message.parts).trim()
-  const placeholder = cloudMediaPlaceholder(message.parts)
-  const content = [text, placeholder]
-    .filter((part): part is string => part !== null && part !== '')
-    .join('\n\n')
-  if (content === '') return null
-  return { role: message.role, content }
-}
+const buildMessages = (activeAssistantId: string, includeMedia: boolean): RNLlamaOAICompatibleMessage[] =>
+  buildLlamaMessages(storeApi.get().messages, activeAssistantId, includeMedia)
 
 const buildCloudMessages = (activeAssistantId: string): SdkMessage[] =>
-  storeApi
-    .get()
-    .messages
-    .filter((message) => message.id !== activeAssistantId)
-    .map(toCloudMessage)
-    .filter((message): message is SdkMessage => message !== null)
+  buildCloudMessageHistory(storeApi.get().messages, activeAssistantId)
 
 const buildCompletionParams = (
   messageId: string,
@@ -702,44 +479,6 @@ const runMemoryToolCalls = async (
   return { messages: results, executions }
 }
 
-type TokenStreamActivity = 'content' | 'thinking' | 'none'
-
-const appendCumulativeDelta = (
-  previous: string,
-  next: string | undefined,
-  append: (chunk: string) => void,
-): { emitted: string; changed: boolean } => {
-  if (next === undefined || next === previous) {
-    return { emitted: previous, changed: false }
-  }
-
-  if (!next.startsWith(previous)) {
-    return { emitted: next, changed: false }
-  }
-
-  const delta = next.slice(previous.length)
-  append(delta)
-  return { emitted: next, changed: delta !== '' }
-}
-
-const appendTokenData = (messageId: string, token: TokenData): TokenStreamActivity => {
-  const state = streamState(messageId)
-
-  const content = appendCumulativeDelta(state.emittedContent, token.content, (chunk) => {
-    appendBuffered(messageId, chunk)
-  })
-  state.emittedContent = content.emitted
-
-  const thinking = appendCumulativeDelta(state.emittedThinking, token.reasoning_content, (chunk) => {
-    appendThinkingBuffered(messageId, chunk)
-  })
-  state.emittedThinking = thinking.emitted
-
-  if (content.changed || state.emittedContent !== '') return 'content'
-  if (thinking.changed) return 'thinking'
-  return 'none'
-}
-
 const stopActiveCompletion = async (): Promise<void> => {
   const request = activeCompletion
   if (request === null) return
@@ -1071,10 +810,11 @@ export const inferenceService = {
     state.clearTurn()
 
     try {
-      const userText = latestUserText()
+      const messages = storeApi.get().messages
+      const userText = latestUserText(messages)
       throwIfAborted(opts.signal)
 
-      const turnRequiresMedia = latestUserRequiresMultimodal()
+      const turnRequiresMedia = latestUserRequiresMultimodal(messages)
 
       if (opts.provider === 'cloud' && cloudProviderService.isConfigured()) {
         const outcome = await generateWithCloud(opts.messageId, opts.signal)

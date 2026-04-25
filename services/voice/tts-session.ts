@@ -59,6 +59,7 @@ export const ttsSession = {
     storeApi.get().setVoiceStatus('speaking')
     storeApi.get().setVoiceError(null)
 
+    const ownsActiveSpeech = (): boolean => activeSpeech?.id === id
     let failed = false
     try {
       await player.start()
@@ -66,16 +67,20 @@ export const ttsSession = {
       await player.finish()
     } catch (error) {
       failed = true
+      if (!ownsActiveSpeech()) return
       storeApi.get().setVoiceStatus('error')
       storeApi.get().setVoiceError(error instanceof Error ? error.message : 'Voice playback failed.')
       throw error
     } finally {
-      if (activeSpeech?.id === id) activeSpeech = null
-      storeApi.get().advanceTts()
-      storeApi.get().setTtsRequestId(null)
+      const stillActive = ownsActiveSpeech()
+      if (stillActive) {
+        activeSpeech = null
+        storeApi.get().advanceTts()
+        storeApi.get().setTtsRequestId(null)
+      }
       client.close()
       await player.stop()
-      if (!failed && storeApi.get().voiceStatus === 'speaking') {
+      if (stillActive && !failed && storeApi.get().voiceStatus === 'speaking') {
         storeApi.get().setVoiceStatus('idle')
       }
     }

@@ -1,232 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'expo-router'
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
-import { colors, radius, shadows, typography } from '../lib/theme'
+import { DoneButton, HeaderButton } from '../components/memory/MemoryButtons'
+import { MemoryNoteCard } from '../components/memory/MemoryNoteCard'
+import { ToolLogRow } from '../components/memory/ToolLogRow'
+import {
+  filterMemoryNotes,
+  memoryStatusCopy,
+  recentVisibleMemoryLog,
+} from '../lib/memory-display'
+import { colors, radius, shadows } from '../lib/theme'
 import { memoryService } from '../services/memory'
 import { useStore } from '../store'
-import type { MemoryNoteSummary, ToolLogEntry } from '../store/slices/memory'
-
-const formatMemoryDate = (value: string): string => {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString([], {
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  })
-}
-
-const formatRelativeDate = (value: string): string => {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  const now = Date.now()
-  const diffMs = now - date.getTime()
-  const diffSeconds = Math.floor(diffMs / 1000)
-  const diffMinutes = Math.floor(diffSeconds / 60)
-  const diffHours = Math.floor(diffMinutes / 60)
-  const diffDays = Math.floor(diffHours / 24)
-
-  if (diffSeconds < 60) return 'just now'
-  if (diffMinutes < 60) return `${diffMinutes}m ago`
-  if (diffHours < 24) return `${diffHours}h ago`
-  if (diffDays < 7) return `${diffDays}d ago`
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`
-  return `${Math.floor(diffDays / 30)}mo ago`
-}
-
-const formatLogTime = (value: number): string =>
-  new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-
-const memoryStatusCopy = (status: string, count: number): string => {
-  if (status === 'loading') return count === 0 ? 'Loading memories' : 'Refreshing memories'
-  if (count === 0) return 'No durable memories stored yet'
-  return `${count} stored memor${count === 1 ? 'y' : 'ies'}`
-}
-
-const cleanText = (value: string | undefined): string => value?.trim() ?? ''
-
-const isOpenLogEntry = (entry: ToolLogEntry): boolean =>
-  entry.status === 'pending' || entry.status === 'running'
-
-const recentVisibleMemoryLog = (entries: readonly ToolLogEntry[]): ToolLogEntry[] => {
-  const recent = entries.slice(-24)
-  const visible = recent
-    .filter((entry, index) => {
-      if (!isOpenLogEntry(entry)) return true
-      return !recent
-        .slice(index + 1)
-        .some((candidate) => candidate.tool === entry.tool && !isOpenLogEntry(candidate))
-    })
-  const seen = new Set<string>()
-  const unique: ToolLogEntry[] = []
-
-  for (const entry of visible.slice().reverse()) {
-    const key = `${entry.tool}:${entry.status}:${entry.detail ?? ''}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    unique.push(entry)
-    if (unique.length === 8) break
-  }
-
-  return unique
-}
-
-function DoneButton({
-  onPress,
-}: {
-  readonly onPress: () => void
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.doneButton,
-        pressed ? styles.pressed : null,
-      ]}
-    >
-      <Text style={styles.doneButtonText}>✓ Done</Text>
-    </Pressable>
-  )
-}
-
-function HeaderButton({
-  label,
-  onPress,
-  muted = false,
-  disabled = false,
-}: {
-  readonly label: string
-  readonly onPress: () => void
-  readonly muted?: boolean
-  readonly disabled?: boolean
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.headerButton,
-        muted ? styles.mutedButton : null,
-        disabled ? styles.disabledButton : null,
-        pressed ? styles.pressed : null,
-      ]}
-    >
-      <Text style={[styles.headerButtonText, muted ? styles.mutedButtonText : null, disabled ? styles.disabledText : null]}>
-        {label}
-      </Text>
-    </Pressable>
-  )
-}
-
-function MemoryNoteCard({
-  note,
-  expanded,
-  deleting,
-  onToggle,
-  onDelete,
-}: {
-  readonly note: MemoryNoteSummary
-  readonly expanded: boolean
-  readonly deleting: boolean
-  readonly onToggle: (path: string) => void
-  readonly onDelete: (note: MemoryNoteSummary) => void
-}) {
-  const preview = cleanText(note.preview) || cleanText(note.description)
-  const indexEntry = cleanText(note.indexEntry)
-  const content = cleanText(note.content)
-  const tags = note.tags.slice(0, 6)
-
-  return (
-    <View style={styles.memoryCard}>
-      <View style={styles.memoryHeader}>
-        <View style={styles.memoryCopy}>
-          <View style={styles.memoryNameRow}>
-            <Text style={styles.memoryName} numberOfLines={2}>{note.name}</Text>
-            <View style={styles.typePill}>
-              <Text style={styles.typePillText}>{note.type}</Text>
-            </View>
-          </View>
-          <Text style={styles.memoryMeta}>{formatMemoryDate(note.modified)} · {formatRelativeDate(note.modified)}</Text>
-        </View>
-        <Pressable
-          accessibilityRole="button"
-          disabled={deleting}
-          onPress={() => onDelete(note)}
-          style={({ pressed }) => [
-            styles.deleteButton,
-            deleting ? styles.disabledButton : null,
-            pressed ? styles.pressed : null,
-          ]}
-        >
-          <Text style={[styles.deleteText, deleting ? styles.disabledText : null]}>
-            {deleting ? '🗑️ Deleting' : '🗑️ Delete'}
-          </Text>
-        </Pressable>
-      </View>
-
-      {preview === '' ? null : <Text style={styles.memoryPreview}>{preview}</Text>}
-      {tags.length === 0 ? null : (
-        <View style={styles.tagsRow}>
-          {tags.map((tag) => (
-            <View key={tag} style={styles.tagPill}>
-              <Text style={styles.tagPillText}>{tag}</Text>
-            </View>
-          ))}
-        </View>
-      )}
-
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => onToggle(note.path)}
-        style={({ pressed }) => [styles.detailButton, pressed ? styles.pressed : null]}
-      >
-        <Text style={styles.detailButtonText}>{expanded ? '▼ Hide' : '▶ Details'}</Text>
-      </Pressable>
-
-      {expanded ? (
-        <View style={styles.detailPanel}>
-          {indexEntry === '' ? null : (
-            <View style={styles.detailBlock}>
-              <Text style={styles.detailLabel}>Index entry</Text>
-              <Text style={styles.detailText}>{indexEntry}</Text>
-            </View>
-          )}
-          {content === '' ? null : (
-            <View style={styles.detailBlock}>
-              <Text style={styles.detailLabel}>Content</Text>
-              <Text style={styles.detailText}>{content}</Text>
-            </View>
-          )}
-          <View style={styles.detailBlock}>
-            <Text style={styles.detailLabel}>Created</Text>
-            <Text style={styles.detailText}>{formatMemoryDate(note.created)}</Text>
-          </View>
-        </View>
-      ) : null}
-    </View>
-  )
-}
-
-function ToolLogRow({ entry }: { readonly entry: ToolLogEntry }) {
-  return (
-    <View style={styles.toolLogRow}>
-      <View style={styles.toolLogCopy}>
-        <Text style={styles.toolLogName}>{entry.tool.replace(/_/g, ' ')}</Text>
-        {entry.detail === undefined ? null : <Text style={styles.toolLogDetail} numberOfLines={2}>{entry.detail}</Text>}
-      </View>
-      <View style={styles.toolLogMeta}>
-        <Text style={styles.toolLogStatus}>{entry.status}</Text>
-        <Text style={styles.toolLogTime}>{formatLogTime(entry.ts)}</Text>
-      </View>
-    </View>
-  )
-}
+import type { MemoryNoteSummary } from '../store/slices/memory'
 
 export default function Memories() {
   const insets = useSafeAreaInsets()
@@ -240,18 +28,11 @@ export default function Memories() {
   const lastExtractionSummary = useStore((s) => s.lastExtractionSummary)
   const toolLog = useStore((s) => s.toolLog)
   const recentMemoryLog = useMemo(() => recentVisibleMemoryLog(toolLog), [toolLog])
+  const filteredNotes = useMemo(
+    () => filterMemoryNotes(memoryNotes, searchQuery),
+    [memoryNotes, searchQuery],
+  )
   const loading = memoryNotesStatus === 'loading'
-
-  const filteredNotes = useMemo(() => {
-    if (searchQuery.trim() === '') return memoryNotes
-    const query = searchQuery.toLowerCase()
-    return memoryNotes.filter((note) =>
-      note.name.toLowerCase().includes(query) ||
-      note.preview?.toLowerCase().includes(query) ||
-      note.description?.toLowerCase().includes(query) ||
-      note.tags.join(' ').toLowerCase().includes(query),
-    )
-  }, [memoryNotes, searchQuery])
 
   useEffect(() => {
     void memoryService.listMemories()
@@ -326,11 +107,11 @@ export default function Memories() {
 
       {memoryNotes.length > 0 ? (
         <TextInput
-          style={styles.searchBar}
+          onChangeText={setSearchQuery}
           placeholder="Search memories"
           placeholderTextColor={colors.text.muted}
+          style={styles.searchBar}
           value={searchQuery}
-          onChangeText={setSearchQuery}
         />
       ) : null}
 
@@ -346,12 +127,12 @@ export default function Memories() {
         <View style={styles.list}>
           {filteredNotes.map((note) => (
             <MemoryNoteCard
+              deleting={deletingPath === note.path}
+              expanded={expandedPath === note.path}
               key={note.path}
               note={note}
-              expanded={expandedPath === note.path}
-              deleting={deletingPath === note.path}
-              onToggle={handleToggle}
               onDelete={handleDelete}
+              onToggle={handleToggle}
             />
           ))}
         </View>
@@ -408,40 +189,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
     marginBottom: 12,
-  },
-  doneButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  doneButtonText: {
-    color: colors.accent.teal,
-    fontSize: 17,
-    fontWeight: '600',
-  },
-  headerButton: {
-    alignItems: 'center',
-    backgroundColor: colors.accent.teal,
-    borderRadius: radius.sm,
-    minHeight: 44,
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-  },
-  headerButtonText: {
-    color: colors.text.onAccent,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  mutedButton: {
-    backgroundColor: colors.bg.secondary,
-  },
-  mutedButtonText: {
-    color: colors.text.primary,
-  },
-  disabledButton: {
-    opacity: 0.52,
-  },
-  disabledText: {
-    color: colors.text.secondary,
   },
   statusPanel: {
     backgroundColor: colors.bg.card,
@@ -505,125 +252,6 @@ const styles = StyleSheet.create({
   list: {
     gap: 16,
   },
-  memoryCard: {
-    backgroundColor: colors.bg.card,
-    borderRadius: radius.md,
-    paddingHorizontal: 13,
-    paddingVertical: 12,
-    ...shadows[1],
-  },
-  memoryHeader: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    gap: 10,
-  },
-  memoryCopy: {
-    flex: 1,
-  },
-  memoryNameRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  memoryName: {
-    color: colors.text.primary,
-    fontSize: 17,
-    fontWeight: '600',
-    lineHeight: 22,
-  },
-  typePill: {
-    backgroundColor: colors.bg.secondary,
-    borderRadius: radius.pill,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  typePillText: {
-    color: colors.text.secondary,
-    fontSize: 13,
-    fontWeight: '500',
-    lineHeight: 18,
-  },
-  memoryMeta: {
-    color: colors.text.secondary,
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 3,
-  },
-  deleteButton: {
-    alignItems: 'center',
-    backgroundColor: colors.button.destructive.bg,
-    borderRadius: radius.sm,
-    minHeight: 44,
-    justifyContent: 'center',
-    paddingHorizontal: 11,
-  },
-  deleteText: {
-    color: colors.accent.error,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  memoryPreview: {
-    color: colors.text.primary,
-    fontSize: 15,
-    lineHeight: 21,
-    marginTop: 10,
-  },
-  tagsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 9,
-  },
-  tagPill: {
-    backgroundColor: 'rgba(18, 184, 158, 0.1)',
-    borderRadius: radius.pill,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  tagPillText: {
-    color: colors.accent.teal,
-    fontSize: 12,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-  },
-  detailButton: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: colors.bg.secondary,
-    borderRadius: radius.sm,
-    minHeight: 44,
-    justifyContent: 'center',
-    marginTop: 11,
-    paddingHorizontal: 12,
-  },
-  detailButtonText: {
-    color: colors.text.primary,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  detailPanel: {
-    borderTopColor: colors.divider,
-    borderTopWidth: 1,
-    gap: 12,
-    marginTop: 12,
-    paddingTop: 12,
-  },
-  detailBlock: {
-    gap: 5,
-  },
-  detailLabel: {
-    color: colors.text.secondary,
-    fontSize: 12,
-    fontWeight: '600',
-    letterSpacing: 0,
-    textTransform: 'uppercase',
-  },
-  detailText: {
-    color: colors.text.primary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
   toolLogPanel: {
     borderTopColor: colors.divider,
     borderTopWidth: 1,
@@ -635,46 +263,5 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     fontSize: 17,
     fontWeight: '600',
-  },
-  toolLogRow: {
-    backgroundColor: colors.bg.card,
-    borderRadius: radius.md,
-    flexDirection: 'row',
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    ...shadows[1],
-  },
-  toolLogCopy: {
-    flex: 1,
-  },
-  toolLogName: {
-    color: colors.text.primary,
-    fontSize: 13,
-    fontWeight: '600',
-    textTransform: 'capitalize',
-  },
-  toolLogDetail: {
-    color: colors.text.secondary,
-    fontSize: 12,
-    lineHeight: 17,
-    marginTop: 3,
-  },
-  toolLogMeta: {
-    alignItems: 'flex-end',
-  },
-  toolLogStatus: {
-    color: colors.accent.teal,
-    fontSize: 12,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-  },
-  toolLogTime: {
-    color: colors.text.secondary,
-    fontSize: 12,
-    marginTop: 3,
-  },
-  pressed: {
-    opacity: 0.72,
   },
 })

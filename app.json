@@ -4,17 +4,17 @@
     "slug": "jeff-phone",
     "version": "0.0.1",
     "orientation": "portrait",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "light",
     "scheme": "jeff",
     "splash": {
-      "backgroundColor": "#0a0a0f"
+      "backgroundColor": "#FAF7F5"
     },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "ai.jeffsbrain.phone",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Jeff uses selected images so the local model can answer questions about them.",
-        "NSMicrophoneUsageDescription": "Jeff uses the microphone for voice chat with the on-device model.",
+        "NSMicrophoneUsageDescription": "Jeff uses the microphone for voice chat.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -54,7 +54,7 @@
             "useExternalAccessory": false
           },
           "iosConfig": {
-            "microphoneUsageDescription": "Jeff uses the microphone for voice chat with the on-device model."
+            "microphoneUsageDescription": "Jeff uses the microphone for voice chat."
           }
         }
       ],

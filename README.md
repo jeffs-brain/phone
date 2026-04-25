@@ -4,11 +4,11 @@ A React Native iOS app that runs Gemma 4 on-device against a personal memory lay
 
 Built for the **Big Berlin Hack 2026** by [Alex Jay](https://github.com/jaythegeek).
 
-> **On-device brain. Berlin voice stack. Your memories never leave your phone.**
+> **Local-first brain. Berlin voice stack. Private memory with explicit provider control.**
 
 ## Status
 
-🚧 **Hackathon build in progress.** Local Gemma chat, vision, memory tools, memory management, Fastino routing, Gradium STT/TTS, and an OpenAI-compatible cloud fallback are wired. Apple Foundation Models, LiveKit/ai-coustics voice v2, EAS project setup, and real-device final validation are still open.
+🚧 **Hackathon build in progress.** Local Gemma chat, local vision, memory tools, memory management, Fastino routing, Gradium STT/TTS, and an OpenAI-compatible cloud fallback are wired. LiveKit/ai-coustics voice v2, EAS project setup, and real-device final validation are still open.
 
 ## The Stack
 
@@ -19,22 +19,22 @@ Built for the **Big Berlin Hack 2026** by [Alex Jay](https://github.com/jaythege
 - **Voice**: Gradium STT + TTS over direct WebSocket
 - **Noise removal**: ai-coustics Quail via LiveKit v2 (planned)
 - **Smart routing**: Fastino Classification TLM (zero-shot)
-- **Alt provider**: Apple Foundation Models via [`react-native-apple-llm`](https://github.com/deveix/react-native-apple-llm)
+- **Cloud fallback**: OpenAI-compatible provider path for manual or routed text turns
 
 ## Repo Layout
 
 ```
 phone/
-  ├── app/                 # expo-router screens
+├── app/                 # expo-router screens
+├── components/          # Extracted chat, settings, and memory UI
 ├── store/               # Zustand store
-│   ├── index.ts         # Combined store with slices + middleware
-│   ├── selectors.ts     # Atomic selectors
 │   ├── types.ts         # Shared types
 │   └── slices/          # inference, chat, voice, memory, routing, settings
 ├── services/            # Native bridges and external APIs
 │   ├── inference.ts     # llama.rn adapter, tool loop, cloud fallback
+│   ├── inference-stream.ts
 │   └── router.ts        # Fastino classifier call
-├── lib/                 # Shared constants and helpers
+├── lib/                 # Shared constants and feature helpers
 ├── app.json             # Expo config — bundle id, plugins, entitlements
 ├── metro.config.js      # Hot-link to ../memory/sdks/rn/memory
 └── .env                 # Local credentials (gitignored)
@@ -51,7 +51,7 @@ cd ../memory && git checkout feat/rn-sdk && bun install && bun run build && cd .
 
 # 3. Configure environment
 cp .env.example .env
-# (edit .env with real keys — see hackathon partner dashboards)
+# (edit .env with real keys; see hackathon partner dashboards)
 
 # 4. Run on iOS
 bun run ios
@@ -63,11 +63,11 @@ See `~/code/me/big-hack-berlin/plan.md` for the full plan, decisions, and demo s
 
 ## Security Notes
 
-This is a public-source repo. The `.env` file is gitignored and so is `credentials.md` and `*.credentials.*`. **`EXPO_PUBLIC_*` env vars are embedded in the app bundle** — fine for a hackathon demo but for production we'd want a backend proxy for the partner API keys.
+This is a public-source repo. The `.env` file is gitignored and so is `credentials.md` and `*.credentials.*`. **`EXPO_PUBLIC_*` env vars are embedded in the app bundle**. Fine for a hackathon demo, but for production we'd want a backend proxy for the partner API keys. Local memory stays on-device; smart routing sends recent chat context to Fastino, voice sends audio/text to Gradium, and cloud fallback sends chat text to the selected provider when enabled.
 
 ## Contributing
 
-This is a hackathon entry; PRs are welcome but the master branch is moving fast over the weekend of 25–26 April 2026.
+This is a hackathon entry; PRs are welcome but the main branch is moving fast over the weekend of 25-26 April 2026.
 
 ## Licence
 
