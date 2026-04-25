@@ -327,3 +327,7 @@ ok, lets begin implementing the changes then
 ---
 
 boot it up
+
+---
+
+commit and push
