@@ -7,17 +7,23 @@ export const LLAMA_RUNTIME_PROFILE: LlamaRuntimeProfile =
   requestedLlamaProfile === 'simulator' ? 'simulator' : 'device'
 
 const isSimulatorProfile = LLAMA_RUNTIME_PROFILE === 'simulator'
+const requestedSimulatorVision = process.env.EXPO_PUBLIC_SIMULATOR_VISION
+const simulatorVisionDisabled =
+  requestedSimulatorVision === 'disabled' ||
+  requestedSimulatorVision === 'false' ||
+  requestedSimulatorVision === '0'
 
 export const INFERENCE_CONFIG = {
   PROFILE: LLAMA_RUNTIME_PROFILE,
   N_CTX: isSimulatorProfile ? 2048 : 4096,
   N_PREDICT_MAX: isSimulatorProfile ? 256 : 512,
-  N_BATCH: isSimulatorProfile ? 256 : 512,
-  N_UBATCH: isSimulatorProfile ? 64 : 128,
+  N_BATCH: 512,
+  N_UBATCH: 512,
   N_THREADS: Platform.OS === 'ios' ? (isSimulatorProfile ? 4 : 6) : 4,
   N_GPU_LAYERS: 99,
   N_PARALLEL: 1,
   IMAGE_MAX_TOKENS: isSimulatorProfile ? 256 : 512,
+  MULTIMODAL_GENERATION_ENABLED: !isSimulatorProfile || !simulatorVisionDisabled,
   MULTIMODAL_USE_GPU: !isSimulatorProfile,
   THINKING_BUDGET_TOKENS: isSimulatorProfile ? 32 : 64,
   THINKING_BUDGET_MESSAGE: '\n\nThinking budget reached; answer now.',

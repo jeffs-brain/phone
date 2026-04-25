@@ -24,6 +24,7 @@ import type { ModelStatus } from '../store/slices/inference'
 import type { ContentPart, GenerationStatus, Message, ProviderId, RouteDecision } from '../store/types'
 
 const ACTIVE_GENERATION_STATUSES: readonly GenerationStatus[] = [
+  'preparing-vision',
   'loading-first-token',
   'thinking',
   'using-tools',
@@ -49,6 +50,7 @@ const MODEL_STATUS_LABELS: Record<ModelStatus, string> = {
 
 const GENERATION_STATUS_LABELS: Record<GenerationStatus, string> = {
   idle: 'Idle',
+  'preparing-vision': 'Preparing vision',
   'loading-first-token': 'Loading first token',
   thinking: 'Thinking',
   'using-tools': 'Using tools',
@@ -91,11 +93,15 @@ const TEXT_FILE_EXTENSIONS = [
   '.hpp',
   '.sql',
 ] as const
+const SUPPORTED_LLAMA_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.bmp', '.gif'] as const
+const SUPPORTED_LLAMA_IMAGE_MIME_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/bmp', 'image/gif'] as const
 
 type ThinkingDetail = {
   readonly status: string
   readonly text: string
 }
+
+type ImageContentPart = Extract<ContentPart, { type: 'image' }>
 
 type StructuredThinking = {
   readonly status?: unknown
@@ -105,6 +111,49 @@ type StructuredThinking = {
 type AttachmentWithDisplayName = ContentPart & {
   readonly fileName?: unknown
   readonly name?: unknown
+}
+
+const imagePartFromLibraryAsset = (asset: ImagePicker.ImagePickerAsset): ImageContentPart => ({
+  type: 'image',
+  uri: asset.uri,
+  name: asset.fileName ?? undefined,
+  mimeType: asset.mimeType ?? undefined,
+  width: asset.width,
+  height: asset.height,
+})
+
+const imagePartFromDocumentAsset = (asset: DocumentPicker.DocumentPickerAsset): ImageContentPart => ({
+  type: 'image',
+  uri: asset.uri,
+  name: asset.name,
+  mimeType: asset.mimeType,
+})
+
+const isSupportedLlamaImage = (part: ImageContentPart): boolean => {
+  const mimeType = part.mimeType?.toLowerCase()
+  if (
+    mimeType !== undefined &&
+    SUPPORTED_LLAMA_IMAGE_MIME_TYPES.some((supported) => supported === mimeType)
+  ) {
+    return true
+  }
+
+  const name = (part.name ?? part.uri).toLowerCase()
+  return SUPPORTED_LLAMA_IMAGE_EXTENSIONS.some((extension) => name.endsWith(extension))
+}
+
+const assertReadableLlamaImage = async (part: ImageContentPart): Promise<ImageContentPart> => {
+  const info = await FileSystem.getInfoAsync(part.uri)
+  if (!info.exists || info.isDirectory) {
+    throw new Error('Selected image could not be read.')
+  }
+  if ('size' in info && typeof info.size === 'number' && info.size <= 0) {
+    throw new Error('Selected image is empty.')
+  }
+  if (!isSupportedLlamaImage(part)) {
+    throw new Error('Choose a JPEG, PNG, BMP, or GIF image.')
+  }
+  return part
 }
 
 const formatContentPart = (part: ContentPart): string => {
@@ -158,7 +207,7 @@ const getThinkingDetail = (thinking: unknown): ThinkingDetail | null => {
   const text = typeof thinking.text === 'string' ? thinking.text.trim() : ''
   const status = thinking.status === 'done' ? 'Thoughts' : 'Thinking'
 
-  if (text === '' && status === 'Thinking') return null
+  if (text === '') return null
   return { status, text }
 }
 
@@ -264,11 +313,20 @@ const textPartFromDocument = async (asset: DocumentPicker.DocumentPickerAsset): 
   }
 }
 
-function ProviderBadge({ decision }: { decision: RouteDecision | null }) {
+function ProviderBadge({
+  decision,
+  modelSize,
+}: {
+  readonly decision: RouteDecision | null
+  readonly modelSize: keyof typeof MODEL_LABELS
+}) {
   const label = decision === null ? 'Provider pending' : PROVIDER_LABELS[decision.provider]
-  const detail = decision === null
+  const routeDetail = decision === null
     ? 'Send a message to route'
     : `${decision.routed ? 'Smart route' : 'Manual'} · ${decision.tier} · ${Math.round(decision.confidence * 100)}%`
+  const detail = decision?.provider === 'gemma-local' || decision === null
+    ? `${routeDetail} · ${MODEL_LABELS[modelSize]}`
+    : routeDetail
 
   return (
     <View style={styles.providerBadge}>
@@ -473,6 +531,7 @@ export default function Chat() {
   const downloadBytes = useStore((s) => s.downloadBytes)
   const cancelGeneration = useStore((s) => s.cancelGeneration)
   const lastDecision = useStore((s) => s.lastDecision)
+  const modelId = useStore((s) => s.modelId)
   const modelSize = useStore((s) => s.modelSize)
   const setModelSize = useStore((s) => s.setModelSize)
 
@@ -501,19 +560,13 @@ export default function Chat() {
     setActionError(null)
 
     void (async () => {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync()
-      if (!permission.granted) {
-        setActionError(permission.canAskAgain
-          ? 'Photo library access is needed to attach images.'
-          : 'Photo library access is disabled in Settings.')
-        return
-      }
-
       const result = await ImagePicker.launchImageLibraryAsync({
-        allowsMultipleSelection: true,
+        allowsMultipleSelection: false,
         mediaTypes: ['images'],
-        quality: 0.9,
-        selectionLimit: 6,
+        preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+        presentationStyle: ImagePicker.UIImagePickerPresentationStyle.FULL_SCREEN,
+        quality: 0.85,
+        shouldDownloadFromNetwork: true,
       })
 
       if (result.canceled) return
@@ -523,6 +576,7 @@ export default function Chat() {
         (asset.type === undefined ||
           asset.type === null ||
           asset.type === 'image' ||
+          asset.type === 'livePhoto' ||
           asset.mimeType?.startsWith('image/') === true)
       ))
 
@@ -531,16 +585,10 @@ export default function Chat() {
         return
       }
 
-      imageAssets.forEach((asset) => {
-        stageAttachment({
-          type: 'image',
-          uri: asset.uri,
-          name: asset.fileName ?? undefined,
-          mimeType: asset.mimeType ?? undefined,
-          width: asset.width,
-          height: asset.height,
-        })
-      })
+      const imageParts = await Promise.all(
+        imageAssets.map((asset) => assertReadableLlamaImage(imagePartFromLibraryAsset(asset))),
+      )
+      imageParts.forEach(stageAttachment)
     })().catch(() => {
       setActionError('Could not attach that image.')
     })
@@ -569,12 +617,7 @@ export default function Chat() {
       for (const asset of result.assets) {
         try {
           if (asset.mimeType?.startsWith('image/') === true) {
-            stageAttachment({
-              type: 'image',
-              uri: asset.uri,
-              name: asset.name,
-              mimeType: asset.mimeType,
-            })
+            stageAttachment(await assertReadableLlamaImage(imagePartFromDocumentAsset(asset)))
             continue
           }
 
@@ -642,7 +685,7 @@ export default function Chat() {
       </View>
 
       <View style={styles.statusPanel}>
-        <ProviderBadge decision={lastDecision} />
+        <ProviderBadge decision={lastDecision} modelSize={modelId ?? modelSize} />
         <View style={styles.statusDivider} />
         <View style={styles.modelStatus}>
           <View style={styles.statusHeadingRow}>

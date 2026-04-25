@@ -12,6 +12,7 @@ import { GEMMA_STOPS, INFERENCE_CONFIG, MEMORY_PRECONTEXT, STREAMING, SYSTEM_PRO
 import { storeApi } from '../store'
 import type { ModelId } from '../store/slices/inference'
 import type { ContentPart, Message, ProviderId } from '../store/types'
+import { memoryService } from './memory'
 import { ensureModelFile, ensureProjectorFile } from './model-assets'
 import { clearRuntimeMarker, writeRuntimeMarker } from './runtime-marker'
 
@@ -48,6 +49,10 @@ let loadInFlight: LoadInFlight | null = null
 let multimodalInFlight: Promise<void> | null = null
 let activeCompletion: CompletionRequest | null = null
 const streams = new Map<string, StreamState>()
+const SIMULATOR_VISION_DISABLED_MESSAGE = [
+  'I can attach and preview that image, but this simulator profile is running text-only Gemma.',
+  'Remove EXPO_PUBLIC_SIMULATOR_VISION=disabled to run the local vision projector in iOS Simulator.',
+].join(' ')
 
 const scheduleFrame = (callback: () => void): number => {
   if (typeof requestAnimationFrame === 'function') {
@@ -147,7 +152,25 @@ const textFromParts = (parts: readonly ContentPart[]): string =>
     .map((part) => part.text)
     .join('\n')
 
-const toLlamaContent = (parts: readonly ContentPart[]): string | RNLlamaMessagePart[] => {
+const mediaPlaceholder = (parts: readonly ContentPart[]): string | null => {
+  const hasImage = parts.some((part) => part.type === 'image')
+  const hasAudio = parts.some((part) => part.type === 'audio')
+  if (!hasImage && !hasAudio) return null
+  if (hasImage && hasAudio) return '[Image and audio attachments omitted on this simulator profile.]'
+  if (hasImage) return '[Image attachment omitted on this simulator profile.]'
+  return '[Audio attachment omitted on this simulator profile.]'
+}
+
+const toLlamaContent = (
+  parts: readonly ContentPart[],
+  includeMedia: boolean,
+): string | RNLlamaMessagePart[] => {
+  if (!includeMedia) {
+    return [textFromParts(parts).trim(), mediaPlaceholder(parts)]
+      .filter((part): part is string => part !== null && part !== '')
+      .join('\n\n')
+  }
+
   const mediaParts = parts
     .filter((part): part is Extract<ContentPart, { type: 'image' | 'audio' }> =>
       part.type === 'image' || part.type === 'audio',
@@ -167,12 +190,15 @@ const toLlamaContent = (parts: readonly ContentPart[]): string | RNLlamaMessageP
   ]
 }
 
-const toLlamaMessage = (message: Message): RNLlamaOAICompatibleMessage | null => {
+const toLlamaMessage = (
+  message: Message,
+  includeMediaForMessage: boolean,
+): RNLlamaOAICompatibleMessage | null => {
   if (message.role === 'tool') return null
   const reasoningContent = message.thinking?.text
   return {
     role: message.role,
-    content: toLlamaContent(message.parts),
+    content: toLlamaContent(message.parts, includeMediaForMessage),
     ...(reasoningContent === undefined || reasoningContent === '' ? {} : { reasoning_content: reasoningContent }),
   }
 }
@@ -183,6 +209,34 @@ const isMediaPart = (part: ContentPart): part is Extract<ContentPart, { type: 'i
 const messageRequiresMultimodal = (message: Message): boolean => message.parts.some(isMediaPart)
 
 const currentContextRequiresMultimodal = (): boolean => storeApi.get().messages.some(messageRequiresMultimodal)
+
+const latestUserRequiresMultimodal = (): boolean => {
+  const messages = storeApi.get().messages
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message?.role === 'user') return messageRequiresMultimodal(message)
+  }
+  return false
+}
+
+const latestUserMediaMessageId = (): string | null => {
+  const messages = storeApi.get().messages
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message?.role !== 'user') continue
+    return messageRequiresMultimodal(message) ? message.id : null
+  }
+  return null
+}
+
+const latestUserText = (): string => {
+  const messages = storeApi.get().messages
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message?.role === 'user') return textFromParts(message.parts)
+  }
+  return ''
+}
 
 const setAssetProgress = (stage: 'checking' | 'available' | 'downloading' | 'verifying' | 'downloaded', bytes: {
   readonly received: number
@@ -213,29 +267,37 @@ const buildSystemPrompt = (): string => {
   return `${SYSTEM_PROMPT}\n\nRelevant memories:\n${memoryBlock}`
 }
 
-const buildMessages = (activeAssistantId: string): RNLlamaOAICompatibleMessage[] => {
+const buildMessages = (activeAssistantId: string, includeMedia: boolean): RNLlamaOAICompatibleMessage[] => {
+  const mediaMessageId = includeMedia ? latestUserMediaMessageId() : null
   const historical = storeApi
     .get()
     .messages
     .filter((message) => message.id !== activeAssistantId)
-    .map(toLlamaMessage)
+    .map((message) => toLlamaMessage(message, message.id === mediaMessageId))
     .filter((message): message is RNLlamaOAICompatibleMessage => message !== null)
 
   return [{ role: 'system', content: buildSystemPrompt() }, ...historical]
 }
 
-const buildCompletionParams = (messageId: string): CompletionParams => ({
-  messages: buildMessages(messageId),
-  n_threads: INFERENCE_CONFIG.N_THREADS,
-  n_predict: INFERENCE_CONFIG.N_PREDICT_MAX,
-  stop: [...GEMMA_STOPS],
-  jinja: true,
-  enable_thinking: true,
-  reasoning_format: 'auto',
-  thinking_budget_tokens: INFERENCE_CONFIG.THINKING_BUDGET_TOKENS,
-  thinking_budget_message: INFERENCE_CONFIG.THINKING_BUDGET_MESSAGE,
-  parallel_tool_calls: false as unknown as object,
-})
+const buildCompletionParams = (messageId: string, includeMedia: boolean): CompletionParams => {
+  const enableThinking = !includeMedia
+  return {
+    messages: buildMessages(messageId, includeMedia),
+    n_threads: INFERENCE_CONFIG.N_THREADS,
+    n_predict: INFERENCE_CONFIG.N_PREDICT_MAX,
+    stop: [...GEMMA_STOPS],
+    jinja: true,
+    enable_thinking: enableThinking,
+    reasoning_format: enableThinking ? 'auto' : 'none',
+    ...(enableThinking
+      ? {
+          thinking_budget_tokens: INFERENCE_CONFIG.THINKING_BUDGET_TOKENS,
+          thinking_budget_message: INFERENCE_CONFIG.THINKING_BUDGET_MESSAGE,
+        }
+      : {}),
+    parallel_tool_calls: false as unknown as object,
+  }
+}
 
 type TokenStreamActivity = 'content' | 'thinking' | 'none'
 
@@ -342,10 +404,20 @@ const ensureMultimodalReady = async (): Promise<void> => {
   return promise
 }
 
-const generateWithLoadedContext = async (messageId: string, signal: AbortSignal): Promise<NativeCompletionResult> => {
+const generationModelId = (preferred: ModelId, includeMedia: boolean): ModelId => {
+  if (includeMedia && INFERENCE_CONFIG.PROFILE === 'simulator') return 'gemma-4-E2B'
+  return preferred
+}
+
+const generateWithLoadedContext = async (
+  messageId: string,
+  signal: AbortSignal,
+  includeMedia: boolean,
+): Promise<NativeCompletionResult> => {
   if (loaded === null) throw new Error('Local Gemma is not loaded.')
 
-  if (currentContextRequiresMultimodal()) {
+  if (includeMedia) {
+    storeApi.get()._setGenerationStatus('preparing-vision')
     await ensureMultimodalReady()
   }
 
@@ -353,7 +425,7 @@ const generateWithLoadedContext = async (messageId: string, signal: AbortSignal)
   await writeRuntimeMarker({ modelId: loaded.id, stage: 'generation' })
   const request = await loaded.context.parallel
     .completion(
-      buildCompletionParams(messageId),
+      buildCompletionParams(messageId, includeMedia),
       (_requestId, token) => {
         const activity = appendTokenData(messageId, token)
         if (activity === 'thinking') {
@@ -469,8 +541,13 @@ export const inferenceService = {
   async generate(opts: GenerateOptions): Promise<void> {
     const state = storeApi.get()
     state._setGenerationStatus('loading-first-token')
+    state.clearTurn()
 
     try {
+      const userText = latestUserText()
+      await memoryService.rememberExplicitInstruction(userText)
+      await memoryService.recallPreContext(userText)
+
       if (opts.provider !== 'gemma-local') {
         appendBuffered(
           opts.messageId,
@@ -478,11 +555,25 @@ export const inferenceService = {
         )
       }
 
-      if (loaded === null) {
-        await this.loadModel(state.modelSize)
+      const turnRequiresMedia = latestUserRequiresMultimodal()
+      const includeMedia = INFERENCE_CONFIG.MULTIMODAL_GENERATION_ENABLED && turnRequiresMedia
+      if (turnRequiresMedia && !includeMedia) {
+        appendBuffered(opts.messageId, SIMULATOR_VISION_DISABLED_MESSAGE)
+        finishStream(opts.messageId)
+        state.commitStreamingMessage(opts.messageId)
+        state._setGenerationStatus('done')
+        return
       }
 
-      const result = await generateWithLoadedContext(opts.messageId, opts.signal)
+      const targetModel = generationModelId(storeApi.get().modelSize, includeMedia)
+      if (targetModel !== storeApi.get().modelSize) {
+        storeApi.get().setModelSize(targetModel)
+      }
+      if (loaded?.id !== targetModel) {
+        await this.loadModel(targetModel)
+      }
+
+      const result = await generateWithLoadedContext(opts.messageId, opts.signal, includeMedia)
       finishStream(opts.messageId)
       state.commitStreamingMessage(opts.messageId, {
         content: result.content,

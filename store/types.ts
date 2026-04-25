@@ -55,6 +55,7 @@ export type Message = {
 
 export type GenerationStatus =
   | 'idle'
+  | 'preparing-vision'
   | 'loading-first-token'
   | 'thinking'
   | 'using-tools'

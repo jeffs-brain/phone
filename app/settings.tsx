@@ -20,6 +20,7 @@ const PROVIDER_OPTIONS: readonly { value: ProviderId; label: string; detail: str
 
 const BUSY_MODEL_STATUSES: readonly ModelStatus[] = ['checking', 'downloading', 'verifying', 'loaded', 'initialised']
 const ACTIVE_GENERATION_STATUSES: readonly GenerationStatus[] = [
+  'preparing-vision',
   'loading-first-token',
   'thinking',
   'using-tools',

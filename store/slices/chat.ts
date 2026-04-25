@@ -3,6 +3,7 @@ import { routerService } from '../../services/router'
 import type { ContentPart, GenerationStatus, Message, RouteDecision, Slice, ToolCall } from '../types'
 
 const ACTIVE_GENERATION_STATUSES: readonly GenerationStatus[] = [
+  'preparing-vision',
   'loading-first-token',
   'thinking',
   'using-tools',
