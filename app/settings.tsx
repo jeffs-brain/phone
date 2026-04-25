@@ -366,7 +366,7 @@ export default function Settings() {
       <Section title="Conversation">
         <ToggleRow
           label="Voice"
-          detail="Shows the voice path while Gradium wiring lands"
+          detail="Mic turns use Gradium STT and Jeff speaks back with a male Gradium voice"
           value={voiceEnabled}
           onValueChange={setVoiceEnabled}
         />

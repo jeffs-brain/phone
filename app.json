@@ -40,6 +40,35 @@
         }
       ],
       [
+        "@siteed/audio-studio",
+        {
+          "enablePhoneStateHandling": false,
+          "enableNotifications": false,
+          "enableBackgroundAudio": false,
+          "enableDeviceDetection": false,
+          "iosBackgroundModes": {
+            "useVoIP": false,
+            "useAudio": false,
+            "useProcessing": false,
+            "useLocation": false,
+            "useExternalAccessory": false
+          },
+          "iosConfig": {
+            "microphoneUsageDescription": "Jeff uses the microphone for voice chat with the on-device model."
+          }
+        }
+      ],
+      [
+        "react-native-audio-api",
+        {
+          "iosBackgroundMode": false,
+          "androidPermissions": [],
+          "androidForegroundService": false,
+          "androidFSTypes": [],
+          "disableFFmpeg": true
+        }
+      ],
+      [
         "expo-build-properties",
         {
           "ios": {

@@ -26,6 +26,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { useStore } from '../store'
 import type { ModelStatus } from '../store/slices/inference'
+import type { VoiceStatus } from '../store/slices/voice'
 import type { ContentPart, GenerationStatus, Message, ProviderId, RouteDecision, ToolCall } from '../store/types'
 
 const ACTIVE_GENERATION_STATUSES: readonly GenerationStatus[] = [
@@ -65,6 +66,28 @@ const GENERATION_STATUS_LABELS: Record<GenerationStatus, string> = {
   done: 'Done',
   error: 'Generation error',
 }
+
+const VOICE_STATUS_LABELS: Record<VoiceStatus, string> = {
+  idle: 'Voice ready',
+  'requesting-permission': 'Requesting mic',
+  connecting: 'Connecting to Gradium',
+  listening: 'Listening',
+  'ending-turn': 'Ending turn',
+  transcribing: 'Transcribing',
+  sending: 'Sending to Jeff',
+  speaking: 'Speaking',
+  error: 'Voice error',
+}
+
+const VOICE_BUSY_STATUSES: readonly VoiceStatus[] = [
+  'requesting-permission',
+  'connecting',
+  'listening',
+  'ending-turn',
+  'transcribing',
+  'sending',
+  'speaking',
+]
 
 const MODEL_LABELS = {
   'gemma-4-E2B': 'Gemma 4 E2B',
@@ -604,10 +627,25 @@ export default function Chat() {
   const modelId = useStore((s) => s.modelId)
   const modelSize = useStore((s) => s.modelSize)
   const setModelSize = useStore((s) => s.setModelSize)
+  const voiceEnabled = useStore((s) => s.voiceEnabled)
+  const voiceStatus = useStore((s) => s.voiceStatus)
+  const asrPartial = useStore((s) => s.asrPartial)
+  const voiceError = useStore((s) => s.voiceError)
+  const startRecording = useStore((s) => s.startRecording)
+  const stopRecording = useStore((s) => s.stopRecording)
+  const cancelVoice = useStore((s) => s.cancelVoice)
 
   const generationActive = isGenerationActive(generationStatus)
+  const voiceBusy = VOICE_BUSY_STATUSES.includes(voiceStatus)
+  const voiceCanPress = voiceEnabled
+    && !generationActive
+    && voiceStatus !== 'ending-turn'
+    && voiceStatus !== 'transcribing'
+    && voiceStatus !== 'sending'
   const hasComposerContent = draft.trim().length > 0 || stagedAttachments.length > 0
-  const canSend = hasComposerContent && !generationActive
+  const canSend = hasComposerContent && !generationActive && !voiceBusy
+  const voiceTranscript = asrPartial.trim()
+  const showVoiceTray = voiceStatus !== 'idle' || voiceError !== null || voiceTranscript !== ''
   const modelDetail = useMemo(
     () => getModelDetail(modelStatus, modelSize, downloadBytes, modelError),
     [downloadBytes, modelError, modelSize, modelStatus],
@@ -715,6 +753,23 @@ export default function Chat() {
     setActionError(null)
     cancelGeneration()
   }, [cancelGeneration])
+
+  const handleMic = useCallback(() => {
+    if (!voiceCanPress) return
+
+    setActionError(null)
+    const action = voiceStatus === 'listening'
+      ? stopRecording()
+      : voiceStatus === 'speaking'
+        ? cancelVoice()
+      : voiceStatus === 'requesting-permission' || voiceStatus === 'connecting'
+        ? cancelVoice()
+        : startRecording()
+
+    void action.catch(() => {
+      setActionError('Voice did not start cleanly.')
+    })
+  }, [cancelVoice, startRecording, stopRecording, voiceCanPress, voiceStatus])
 
   const handleOpenMemories = useCallback(() => {
     router.push('/memories')
@@ -863,6 +918,18 @@ export default function Chat() {
 
       <View style={[styles.composerWrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
         {actionError === null ? null : <Text style={styles.errorText}>{actionError}</Text>}
+        {showVoiceTray ? (
+          <View style={styles.voiceTray}>
+            <View style={styles.voiceTrayHeader}>
+              <Text style={styles.voiceTrayLabel}>{VOICE_STATUS_LABELS[voiceStatus]}</Text>
+              {voiceStatus === 'listening' || voiceStatus === 'speaking' ? (
+                <Text style={styles.voiceTrayMeta}>{voiceStatus === 'speaking' ? 'Gradium TTS' : 'Gradium STT'}</Text>
+              ) : null}
+            </View>
+            {voiceTranscript === '' ? null : <Text style={styles.voiceTranscript}>{voiceTranscript}</Text>}
+            {voiceError === null ? null : <Text style={styles.voiceError}>{voiceError}</Text>}
+          </View>
+        ) : null}
         <StagedAttachmentTray
           attachments={stagedAttachments}
           onClear={clearStaged}
@@ -899,11 +966,29 @@ export default function Chat() {
               </Pressable>
               <Pressable
                 accessibilityRole="button"
-                accessibilityState={{ disabled: true }}
-                disabled
-                style={[styles.attachmentButton, styles.placeholderAttachmentButton]}
+                accessibilityState={{ disabled: !voiceCanPress, selected: voiceBusy }}
+                disabled={!voiceCanPress}
+                onPress={handleMic}
+                style={({ pressed }) => [
+                  styles.attachmentButton,
+                  voiceBusy ? styles.voiceActiveButton : null,
+                  !voiceCanPress ? styles.disabledAttachmentButton : null,
+                  pressed ? styles.pressed : null,
+                ]}
               >
-                <Text style={styles.placeholderAttachmentButtonText}>Mic</Text>
+                <Text style={[
+                  styles.attachmentButtonText,
+                  voiceBusy ? styles.voiceActiveButtonText : null,
+                  !voiceCanPress ? styles.disabledAttachmentButtonText : null,
+                ]}>
+                  {voiceStatus === 'listening'
+                    ? 'End'
+                    : voiceStatus === 'speaking'
+                      ? 'Stop'
+                    : voiceStatus === 'connecting' || voiceStatus === 'requesting-permission'
+                      ? 'Cancel'
+                      : 'Mic'}
+                </Text>
               </Pressable>
             </View>
             {generationActive ? (
@@ -1397,6 +1482,56 @@ const styles = StyleSheet.create({
     color: '#9aa4b6',
     fontSize: 13,
     fontWeight: '900',
+  },
+  disabledAttachmentButton: {
+    backgroundColor: '#202737',
+    borderColor: '#344052',
+    opacity: 0.58,
+  },
+  disabledAttachmentButtonText: {
+    color: '#8d96aa',
+  },
+  voiceActiveButton: {
+    backgroundColor: '#173a33',
+    borderColor: '#3f947f',
+  },
+  voiceActiveButtonText: {
+    color: '#bdf7e8',
+  },
+  voiceTray: {
+    backgroundColor: '#111722',
+    borderColor: '#293447',
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  voiceTrayHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  voiceTrayLabel: {
+    color: '#dce3ef',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  voiceTrayMeta: {
+    color: '#8bcdbf',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  voiceTranscript: {
+    color: '#f4f7fb',
+    fontSize: 15,
+    lineHeight: 20,
+  },
+  voiceError: {
+    color: '#ff9fb0',
+    fontSize: 13,
+    lineHeight: 18,
   },
   input: {
     color: '#f4f7fb',

@@ -89,9 +89,9 @@ const noteTitle = (text: string): string => {
 
 const explicitMemoryText = (text: string): string | null => {
   const trimmed = text.trim()
-  const match = /^(?:please\s+)?(?:remember|make\s+a\s+note\s+that|note\s+that)\s+(.+)$/is.exec(trimmed)
-  if (match === null) return null
-  const memory = match[1]?.trim() ?? ''
+  const prefixMatch = /^(?:please\s+)?(?:remember|make\s+a\s+note\s+that|note\s+that)\s+(.+)$/is.exec(trimmed)
+  const suffixMatch = /^(.+?),?\s+(?:please\s+)?(?:remember\s+that|remember\s+this|keep\s+that\s+in\s+mind|keep\s+this\s+in\s+mind)$/is.exec(trimmed)
+  const memory = (prefixMatch?.[1] ?? suffixMatch?.[1] ?? '').trim()
   return memory === '' ? null : memory
 }
 

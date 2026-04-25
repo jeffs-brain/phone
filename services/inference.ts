@@ -54,7 +54,7 @@ type CompletionTokenHandler = NonNullable<Parameters<LlamaContext['parallel']['c
 
 type LlamaAssistantToolCallMessage = RNLlamaOAICompatibleMessage & {
   readonly role: 'assistant'
-  readonly tool_calls: readonly LlamaToolCall[]
+  readonly tool_calls: readonly LlamaToolCallWithId[]
 }
 
 type LlamaToolResultMessage = RNLlamaOAICompatibleMessage & {
@@ -62,6 +62,10 @@ type LlamaToolResultMessage = RNLlamaOAICompatibleMessage & {
   readonly tool_call_id: string
   readonly name?: string
   readonly content: string
+}
+
+type LlamaToolCallWithId = LlamaToolCall & {
+  readonly id: string
 }
 
 let loaded: LoadedContext | null = null
@@ -434,7 +438,7 @@ const structuredMemoryCompletion = async (
       parallel_tool_calls: false as unknown as object,
     },
   )
-  return result.content
+  return normaliseCompletionContent(result.content)
 }
 
 const extractTurnMemory = async (
@@ -461,9 +465,53 @@ const parseToolArguments = (raw: string): unknown => {
   return JSON.parse(trimmed) as unknown
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const nonEmptyString = (value: unknown): string | null =>
+  typeof value === 'string' && value.trim() !== '' ? value : null
+
+const normaliseToolArguments = (value: unknown): string => {
+  if (typeof value === 'string') return value
+  if (value === undefined || value === null) return '{}'
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return '{}'
+  }
+}
+
+const normaliseToolCall = (call: LlamaToolCall): LlamaToolCallWithId => {
+  const rawCall: unknown = call
+  const record = isRecord(rawCall) ? rawCall : {}
+  const rawFunction = record.function
+  const fn = isRecord(rawFunction) ? rawFunction : {}
+
+  return {
+    id: nonEmptyString(record.id) ?? createId('tool'),
+    type: 'function',
+    function: {
+      name: nonEmptyString(fn.name) ?? 'unknown_tool',
+      arguments: normaliseToolArguments(fn.arguments),
+    },
+  }
+}
+
+const normaliseCompletionContent = (content: unknown): string =>
+  typeof content === 'string' ? content : ''
+
+const normaliseCompletionThinking = (thinking: unknown): string =>
+  typeof thinking === 'string' ? thinking : ''
+
+const completionToolCalls = (result: NativeCompletionResult): readonly LlamaToolCall[] => {
+  const rawResult: unknown = result
+  const record = isRecord(rawResult) ? rawResult : {}
+  return Array.isArray(record.tool_calls) ? record.tool_calls as LlamaToolCall[] : []
+}
+
 const runMemoryToolCalls = async (
   messageId: string,
-  toolCalls: readonly LlamaToolCall[],
+  toolCalls: readonly LlamaToolCallWithId[],
 ): Promise<readonly LlamaToolResultMessage[]> => {
   if (toolCalls.length === 0) return []
 
@@ -471,7 +519,7 @@ const runMemoryToolCalls = async (
   const results: LlamaToolResultMessage[] = []
 
   for (const call of toolCalls) {
-    const id = call.id ?? createId('tool')
+    const id = call.id
     const name = call.function.name
     let args: unknown = {}
 
@@ -695,7 +743,10 @@ const generateWithLoadedContext = async (
   )
 }
 
-const toolChoiceMessage = (content: string, toolCalls: readonly LlamaToolCall[]): LlamaAssistantToolCallMessage => ({
+const toolChoiceMessage = (
+  content: string,
+  toolCalls: readonly LlamaToolCallWithId[],
+): LlamaAssistantToolCallMessage => ({
   role: 'assistant',
   content,
   tool_calls: toolCalls,
@@ -715,12 +766,15 @@ const generateWithMemoryTools = async (
     streamingTokenHandler(messageId),
   )
 
-  for (let round = 0; round < TOOL_LIMITS.MAX_ROUNDS && result.tool_calls.length > 0; round += 1) {
+  for (let round = 0; round < TOOL_LIMITS.MAX_ROUNDS; round += 1) {
     throwIfAborted(signal)
-    const toolResultMessages = await runMemoryToolCalls(messageId, result.tool_calls)
+    const assistantToolCalls = completionToolCalls(result).map(normaliseToolCall)
+    if (assistantToolCalls.length === 0) break
+
+    const toolResultMessages = await runMemoryToolCalls(messageId, assistantToolCalls)
     messages = [
       ...messages,
-      toolChoiceMessage(result.content, result.tool_calls),
+      toolChoiceMessage(normaliseCompletionContent(result.content), assistantToolCalls),
       ...toolResultMessages,
     ]
 
@@ -859,12 +913,14 @@ export const inferenceService = {
       const result = !includeMedia
         ? await generateWithMemoryTools(opts.messageId, opts.signal)
         : await generateWithLoadedContext(opts.messageId, opts.signal, includeMedia)
+      const content = normaliseCompletionContent(result.content)
+      const thinking = normaliseCompletionThinking(result.reasoning_content)
       finishStream(opts.messageId)
       state.commitStreamingMessage(opts.messageId, {
-        content: result.content,
-        thinking: result.reasoning_content,
+        content,
+        thinking,
       })
-      await extractTurnMemory(opts.messageId, userText, result.content, includeMedia, opts.signal)
+      await extractTurnMemory(opts.messageId, userText, content, includeMedia, opts.signal)
       state._setGenerationStatus('done')
     } catch (error) {
       finishStream(opts.messageId)
