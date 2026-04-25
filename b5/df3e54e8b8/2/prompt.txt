@@ -1,0 +1,1 @@
+In /Users/alexjay/code/jeffs-brain/phone, inspect the installed Expo FileSystem APIs/types and current model download code. I need a concise recommendation for robust large-file GGUF downloads on iOS simulator/device: resumable downloads, whether partial files can be retained/resumed, how to persist resumeData if available, and any API pitfalls in SDK 55. Do not edit files.
