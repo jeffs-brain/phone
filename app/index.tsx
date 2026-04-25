@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { LiquidGlassView, isLiquidGlassSupported } from '@callstack/liquid-glass'
 import * as DocumentPicker from 'expo-document-picker'
 import * as FileSystem from 'expo-file-system/legacy'
@@ -542,12 +542,30 @@ function StagedAttachmentTray({
 function MessageBubble({ message }: { message: Message }) {
   const isUser = message.role === 'user'
   const isAssistant = message.role === 'assistant'
+  const voiceEnabled = useStore((s) => s.voiceEnabled)
+  const voiceStatus = useStore((s) => s.voiceStatus)
+  const ttsCurrent = useStore((s) => s.ttsCurrent)
+  const speakMessage = useStore((s) => s.speakMessage)
+  const stopSpeech = useStore((s) => s.stopSpeech)
   const text = getMessageText(message)
   const thinking = isAssistant ? getThinkingDetail(message.thinking) : null
   const images = getImageParts(message)
   const hasAnswer = text.trim() !== ''
   const displayText = hasAnswer ? text : 'Thinking...'
   const showAnswerText = hasAnswer || (isAssistant && thinking === null && images.length === 0)
+  const isSpeakingThisMessage = voiceStatus === 'speaking' && ttsCurrent?.messageId === message.id
+  const canSpeakMessage = isAssistant && voiceEnabled && hasAnswer && message.streamingText === undefined
+  const speechDisabled = !canSpeakMessage || (voiceStatus !== 'idle' && !isSpeakingThisMessage)
+
+  const handleSpeechPress = useCallback(() => {
+    if (isSpeakingThisMessage) {
+      stopSpeech()
+      return
+    }
+
+    if (speechDisabled) return
+    void speakMessage({ messageId: message.id, text })
+  }, [isSpeakingThisMessage, message.id, speakMessage, speechDisabled, stopSpeech, text])
 
   return (
     <View style={[styles.messageRow, isUser ? styles.messageRowUser : styles.messageRowAssistant]}>
@@ -561,9 +579,34 @@ function MessageBubble({ message }: { message: Message }) {
           <Text style={[styles.messageRole, isUser ? styles.userMessageRole : null]}>
             {getRoleLabel(message.role)}
           </Text>
-          {message.routeDecision === undefined ? null : (
-            <Text style={styles.messageRoute}>{PROVIDER_LABELS[message.routeDecision.provider]}</Text>
-          )}
+          <View style={styles.messageMetaActions}>
+            {canSpeakMessage ? (
+              <Pressable
+                accessibilityLabel={isSpeakingThisMessage ? 'Stop speaking this message' : 'Speak this message'}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: speechDisabled, selected: isSpeakingThisMessage }}
+                disabled={speechDisabled}
+                onPress={handleSpeechPress}
+                style={({ pressed }) => [
+                  styles.speechButton,
+                  isSpeakingThisMessage ? styles.speechButtonActive : null,
+                  speechDisabled ? styles.speechButtonDisabled : null,
+                  pressed ? styles.pressed : null,
+                ]}
+              >
+                <Text style={[
+                  styles.speechButtonText,
+                  isSpeakingThisMessage ? styles.speechButtonTextActive : null,
+                  speechDisabled ? styles.speechButtonTextDisabled : null,
+                ]}>
+                  {isSpeakingThisMessage ? 'Stop' : 'Play'}
+                </Text>
+              </Pressable>
+            ) : null}
+            {message.routeDecision === undefined ? null : (
+              <Text style={styles.messageRoute}>{PROVIDER_LABELS[message.routeDecision.provider]}</Text>
+            )}
+          </View>
         </View>
         {thinking === null ? null : <ThinkingDisclosure thinking={thinking} />}
         {message.toolCalls === undefined || message.toolCalls.length === 0 ? null : (
@@ -607,6 +650,7 @@ export default function Chat() {
   const router = useRouter()
   const listRef = useRef<FlatList<Message>>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [storeHydrated, setStoreHydrated] = useState(() => useStore.persist.hasHydrated())
 
   const messages = useStore((s) => s.messages)
   const draft = useStore((s) => s.draft)
@@ -650,6 +694,19 @@ export default function Chat() {
     () => getModelDetail(modelStatus, modelSize, downloadBytes, modelError),
     [downloadBytes, modelError, modelSize, modelStatus],
   )
+
+  useEffect(() => {
+    if (storeHydrated) return undefined
+    const unsubscribe = useStore.persist.onFinishHydration(() => setStoreHydrated(true))
+    return unsubscribe
+  }, [storeHydrated])
+
+  useEffect(() => {
+    if (!storeHydrated || modelStatus !== 'unloaded' || generationActive) return
+    void loadModel(modelSize).catch(() => {
+      setActionError('Could not auto-load the local model.')
+    })
+  }, [generationActive, loadModel, modelSize, modelStatus, storeHydrated])
 
   const scrollToEnd = useCallback(() => {
     if (messages.length === 0) return
@@ -1246,6 +1303,12 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 5,
   },
+  messageMetaActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexShrink: 1,
+    gap: 8,
+  },
   messageRole: {
     color: '#9ba7bd',
     fontSize: 11,
@@ -1261,6 +1324,35 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     fontSize: 11,
     fontWeight: '700',
+  },
+  speechButton: {
+    alignItems: 'center',
+    backgroundColor: '#202838',
+    borderColor: '#344052',
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 26,
+    minWidth: 48,
+    paddingHorizontal: 8,
+  },
+  speechButtonActive: {
+    backgroundColor: '#3a1f28',
+    borderColor: '#8a4659',
+  },
+  speechButtonDisabled: {
+    opacity: 0.5,
+  },
+  speechButtonText: {
+    color: '#8be9d4',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  speechButtonTextActive: {
+    color: '#ffc7d2',
+  },
+  speechButtonTextDisabled: {
+    color: '#8d96aa',
   },
   messageText: {
     color: '#eef2f8',

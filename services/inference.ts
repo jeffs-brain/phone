@@ -14,12 +14,12 @@ import type {
   StructuredRequest as SdkStructuredRequest,
 } from '@jeffs-brain/memory-react-native'
 
-import { GEMMA_STOPS, INFERENCE_CONFIG, MEMORY_PRECONTEXT, STREAMING, SYSTEM_PROMPT, TOOL_LIMITS } from '../lib/constants'
+import { GEMMA_STOPS, INFERENCE_CONFIG, STREAMING, SYSTEM_PROMPT, TOOL_LIMITS } from '../lib/constants'
 import { createId } from '../lib/id'
 import { storeApi } from '../store'
 import type { ModelId } from '../store/slices/inference'
 import type { ContentPart, Message, ProviderId } from '../store/types'
-import { MEMORY_TOOL_DEFINITIONS, memoryService } from './memory'
+import { MEMORY_TOOL_DEFINITIONS, MemoryToolArgumentError, memoryService } from './memory'
 import { ensureModelFile, ensureProjectorFile } from './model-assets'
 import { clearRuntimeMarker, isSimulatorMultimodalGpuAutoDisabled, writeRuntimeMarker } from './runtime-marker'
 
@@ -66,6 +66,17 @@ type LlamaToolResultMessage = RNLlamaOAICompatibleMessage & {
 
 type LlamaToolCallWithId = LlamaToolCall & {
   readonly id: string
+}
+
+type PreparedToolCall = {
+  readonly call: LlamaToolCallWithId
+  readonly args: unknown
+  readonly argumentError?: string
+}
+
+type GenerationOutcome = {
+  readonly result: NativeCompletionResult
+  readonly memoryToolNames: readonly string[]
 }
 
 let loaded: LoadedContext | null = null
@@ -280,17 +291,6 @@ const setAssetProgress = (stage: 'checking' | 'available' | 'downloading' | 'ver
   state._setDownloadBytes(bytes)
 }
 
-const buildSystemPrompt = (): string => {
-  const hits = storeApi.get().preContextHits.slice(0, MEMORY_PRECONTEXT.TOP_K)
-  if (hits.length === 0) return SYSTEM_PROMPT
-
-  const memoryBlock = hits
-    .map((hit, index) => `${index + 1}. ${hit.text.slice(0, MEMORY_PRECONTEXT.SNIPPET_MAX_CHARS)}`)
-    .join('\n')
-
-  return `${SYSTEM_PROMPT}\n\nRelevant memories:\n${memoryBlock}`
-}
-
 const buildMessages = (activeAssistantId: string, includeMedia: boolean): RNLlamaOAICompatibleMessage[] => {
   const mediaMessageId = includeMedia ? latestUserMediaMessageId() : null
   const historical = storeApi
@@ -300,7 +300,7 @@ const buildMessages = (activeAssistantId: string, includeMedia: boolean): RNLlam
     .map((message) => toLlamaMessage(message, message.id === mediaMessageId))
     .filter((message): message is RNLlamaOAICompatibleMessage => message !== null)
 
-  return [{ role: 'system', content: buildSystemPrompt() }, ...historical]
+  return [{ role: 'system', content: SYSTEM_PROMPT }, ...historical]
 }
 
 const buildCompletionParams = (
@@ -334,16 +334,6 @@ const buildCompletionParams = (
   }
 }
 
-const shouldOfferMemoryTools = (text: string): boolean => {
-  const normalised = text.toLowerCase()
-  return /\b(remember|memory|memories|recall|forget|forgot|what did i|what do you remember|did i tell you|list .*memories)\b/.test(normalised)
-}
-
-const shouldConsiderAutomaticMemory = (text: string): boolean => {
-  const normalised = text.toLowerCase()
-  return /\b(remember|keep in mind|for future|important|my name is|i am|i'm|i live|i work|my wife|my husband|my partner|my kid|my daughter|my son|i prefer|i like|i dislike|i hate|favourite|favorite|allergic|allergy|diet|birthday|address|phone number|email|project|deadline|goal|plan|preference)\b/.test(normalised)
-}
-
 const throwIfAborted = (signal: AbortSignal): void => {
   if (signal.aborted) throw new Error('Generation cancelled.')
 }
@@ -352,13 +342,13 @@ const shouldExtractTurnMemory = (
   userText: string,
   assistantText: string,
   includeMedia: boolean,
+  memoryToolNames: readonly string[],
 ): boolean =>
   storeApi.get().rememberConversation
     && !includeMedia
+    && memoryToolNames.length === 0
     && userText.trim() !== ''
     && assistantText.trim() !== ''
-    && !shouldOfferMemoryTools(userText)
-    && shouldConsiderAutomaticMemory(userText)
 
 const textFromSdkBlock = (block: SdkContentBlock): string => {
   if (block.type === 'text') return block.text ?? ''
@@ -403,8 +393,10 @@ const memoryExtractionPolicy = (request: SdkStructuredRequest): RNLlamaOAICompat
     role: 'system',
     content: [
       'Apply a strict memory policy.',
-      'Return {"notes":[]} unless the conversation contains a stable fact, preference, plan, relationship, project detail, or explicit feedback that will matter in future chats.',
-      'Do not create memories for greetings, casual acknowledgements, jokes, image descriptions, transient questions, or the assistant\'s own suggestions.',
+      'Return {"notes":[]} unless the user authored a stable personal fact, durable preference, relationship, long-term project detail, or explicit feedback that will matter in future chats.',
+      'The assistant text is context only. Never save assistant guesses, suggestions, readiness messages, or generic summaries as user memory.',
+      'Do not create memories for greetings, casual acknowledgements, jokes, image descriptions, transient questions, pending images/files, current-session next steps, or immediate workflow state.',
+      'Do not store short-lived plans like "we will look at an image next"; only store longer-term plans or project facts that should survive this chat.',
       'If the user explicitly asks you to remember something, preserve the exact durable fact.',
     ].join('\n'),
   }]
@@ -446,9 +438,10 @@ const extractTurnMemory = async (
   userText: string,
   assistantText: string,
   includeMedia: boolean,
+  memoryToolNames: readonly string[],
   signal: AbortSignal,
 ): Promise<void> => {
-  if (!shouldExtractTurnMemory(userText, assistantText, includeMedia)) return
+  if (!shouldExtractTurnMemory(userText, assistantText, includeMedia, memoryToolNames)) return
   if (signal.aborted) return
   storeApi.get()._setGenerationStatus('using-tools')
   await memoryService.extractTurn({
@@ -497,6 +490,45 @@ const normaliseToolCall = (call: LlamaToolCall): LlamaToolCallWithId => {
   }
 }
 
+const stringifyToolArguments = (args: unknown): string => {
+  try {
+    return JSON.stringify(args ?? {}) ?? '{}'
+  } catch {
+    return '{}'
+  }
+}
+
+const prepareToolCall = (call: LlamaToolCall): PreparedToolCall => {
+  const normalised = normaliseToolCall(call)
+
+  try {
+    const args = parseToolArguments(normalised.function.arguments)
+    return {
+      call: {
+        ...normalised,
+        function: {
+          ...normalised.function,
+          arguments: stringifyToolArguments(args),
+        },
+      },
+      args,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return {
+      call: {
+        ...normalised,
+        function: {
+          ...normalised.function,
+          arguments: '{}',
+        },
+      },
+      args: {},
+      argumentError: `Tool arguments were invalid JSON: ${message}`,
+    }
+  }
+}
+
 const normaliseCompletionContent = (content: unknown): string =>
   typeof content === 'string' ? content : ''
 
@@ -509,22 +541,40 @@ const completionToolCalls = (result: NativeCompletionResult): readonly LlamaTool
   return Array.isArray(record.tool_calls) ? record.tool_calls as LlamaToolCall[] : []
 }
 
+const toolErrorContent = (name: string, message: string, retryable: boolean): string =>
+  JSON.stringify({
+    error: {
+      tool: name,
+      message,
+      retryable,
+      expected: {
+        memory_recall: { query: 'string', topK: 'number?' },
+        memory_remember: { content: 'string', name: 'string?', path: 'string?', filename: 'string?', tags: 'string[]?' },
+        memory_forget: { path: 'string' },
+        memory_list: { limit: 'number?' },
+      }[name] ?? 'Use the declared tool schema.',
+    },
+  })
+
 const runMemoryToolCalls = async (
   messageId: string,
-  toolCalls: readonly LlamaToolCallWithId[],
+  toolCalls: readonly PreparedToolCall[],
 ): Promise<readonly LlamaToolResultMessage[]> => {
   if (toolCalls.length === 0) return []
 
   storeApi.get()._setGenerationStatus('using-tools')
   const results: LlamaToolResultMessage[] = []
 
-  for (const call of toolCalls) {
+  for (const prepared of toolCalls) {
+    const call = prepared.call
     const id = call.id
     const name = call.function.name
-    let args: unknown = {}
+    const args = prepared.args
 
     try {
-      args = parseToolArguments(call.function.arguments)
+      if (prepared.argumentError !== undefined) {
+        throw new Error(prepared.argumentError)
+      }
       const execution = await memoryService.runTool(name, args)
       storeApi.get().appendToolCall(messageId, {
         id,
@@ -541,18 +591,21 @@ const runMemoryToolCalls = async (
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      storeApi.get().appendToolCall(messageId, {
-        id,
-        name,
-        args,
-        status: 'error',
-        error: message,
-      })
+      const retryable = prepared.argumentError !== undefined || error instanceof MemoryToolArgumentError
+      if (!retryable) {
+        storeApi.get().appendToolCall(messageId, {
+          id,
+          name,
+          args,
+          status: 'error',
+          error: message,
+        })
+      }
       results.push({
         role: 'tool',
         tool_call_id: id,
         name,
-        content: `${name} failed: ${message}`,
+        content: toolErrorContent(name, message, retryable),
       })
     }
   }
@@ -755,37 +808,46 @@ const toolChoiceMessage = (
 const generateWithMemoryTools = async (
   messageId: string,
   signal: AbortSignal,
-): Promise<NativeCompletionResult> => {
+): Promise<GenerationOutcome> => {
   if (loaded === null) throw new Error('Local Gemma is not loaded.')
   throwIfAborted(signal)
 
   let messages = buildMessages(messageId, false)
+  const memoryToolNames: string[] = []
   let result = await completeWithLoadedContext(
     signal,
     buildCompletionParams(messageId, false, messages, true),
-    streamingTokenHandler(messageId),
   )
 
   for (let round = 0; round < TOOL_LIMITS.MAX_ROUNDS; round += 1) {
     throwIfAborted(signal)
-    const assistantToolCalls = completionToolCalls(result).map(normaliseToolCall)
-    if (assistantToolCalls.length === 0) break
+    const preparedToolCalls = completionToolCalls(result).map(prepareToolCall)
+    if (preparedToolCalls.length === 0) break
 
-    const toolResultMessages = await runMemoryToolCalls(messageId, assistantToolCalls)
+    const assistantToolCalls = preparedToolCalls.map((prepared) => prepared.call)
+    memoryToolNames.push(...assistantToolCalls.map((call) => call.function.name))
+    const toolResultMessages = await runMemoryToolCalls(messageId, preparedToolCalls)
     messages = [
       ...messages,
       toolChoiceMessage(normaliseCompletionContent(result.content), assistantToolCalls),
       ...toolResultMessages,
     ]
 
+    const allowMoreTools = round + 1 < TOOL_LIMITS.MAX_ROUNDS
+    if (!allowMoreTools) break
+
     result = await completeWithLoadedContext(
       signal,
-      buildCompletionParams(messageId, false, messages, round + 1 < TOOL_LIMITS.MAX_ROUNDS),
-      streamingTokenHandler(messageId),
+      buildCompletionParams(messageId, false, messages, true),
     )
   }
 
-  return result
+  const finalResult = await completeWithLoadedContext(
+    signal,
+    buildCompletionParams(messageId, false, messages, false),
+    streamingTokenHandler(messageId),
+  )
+  return { result: finalResult, memoryToolNames }
 }
 
 const loadModelInternal = async (id: ModelId): Promise<void> => {
@@ -881,7 +943,6 @@ export const inferenceService = {
 
     try {
       const userText = latestUserText()
-      await memoryService.rememberExplicitInstruction(userText)
       throwIfAborted(opts.signal)
 
       if (opts.provider !== 'gemma-local') {
@@ -910,9 +971,13 @@ export const inferenceService = {
         throwIfAborted(opts.signal)
       }
 
-      const result = !includeMedia
+      const outcome = !includeMedia
         ? await generateWithMemoryTools(opts.messageId, opts.signal)
-        : await generateWithLoadedContext(opts.messageId, opts.signal, includeMedia)
+        : {
+            result: await generateWithLoadedContext(opts.messageId, opts.signal, includeMedia),
+            memoryToolNames: [],
+          }
+      const result = outcome.result
       const content = normaliseCompletionContent(result.content)
       const thinking = normaliseCompletionThinking(result.reasoning_content)
       finishStream(opts.messageId)
@@ -920,7 +985,7 @@ export const inferenceService = {
         content,
         thinking,
       })
-      await extractTurnMemory(opts.messageId, userText, content, includeMedia, opts.signal)
+      await extractTurnMemory(opts.messageId, userText, content, includeMedia, outcome.memoryToolNames, opts.signal)
       state._setGenerationStatus('done')
     } catch (error) {
       finishStream(opts.messageId)

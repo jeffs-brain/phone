@@ -220,11 +220,17 @@ export const createChatSlice: Slice<ChatSlice> = (set, get) => ({
   appendToolCall: (id, toolCall) =>
     set((s) => {
       return {
-        messages: s.messages.map((message) =>
-          message.id === id
-            ? { ...message, toolCalls: [...(message.toolCalls ?? []), toolCall] }
-            : message,
-        ),
+        messages: s.messages.map((message) => {
+          if (message.id !== id) return message
+          const toolCalls = message.toolCalls ?? []
+          const existingIndex = toolCalls.findIndex((existing) => existing.id === toolCall.id)
+          if (existingIndex === -1) return { ...message, toolCalls: [...toolCalls, toolCall] }
+
+          return {
+            ...message,
+            toolCalls: toolCalls.map((existing, index) => index === existingIndex ? toolCall : existing),
+          }
+        }),
       }
     }, false, 'chat/appendToolCall'),
 

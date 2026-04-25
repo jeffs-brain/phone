@@ -14,11 +14,6 @@ type ActiveVoiceTurn = {
   finishing: boolean
 }
 
-type AssistantReply = {
-  readonly messageId: string
-  readonly text: string
-}
-
 let activeTurn: ActiveVoiceTurn | null = null
 
 const normaliseTranscript = (text: string): string => text.replace(/\s+/g, ' ').trim()
@@ -27,21 +22,6 @@ const turnTranscript = (turn: ActiveVoiceTurn): string => normaliseTranscript(tu
 
 const errorDetail = (error: unknown, fallback: string): string =>
   error instanceof Error ? error.message : fallback
-
-const assistantReplyText = (): AssistantReply | null => {
-  const messages = storeApi.get().messages
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
-    if (message?.role !== 'assistant') continue
-    const text = message.parts
-      .filter((part): part is Extract<typeof part, { type: 'text' }> => part.type === 'text')
-      .map((part) => part.text)
-      .join('\n')
-      .trim()
-    if (text !== '') return { messageId: message.id, text }
-  }
-  return null
-}
 
 const appendTranscript = (turn: ActiveVoiceTurn, text: string): string => {
   const segment = normaliseTranscript(text)
@@ -102,13 +82,6 @@ const finishTurn = async (reason: 'vad' | 'manual'): Promise<void> => {
     storeApi.get().setVoiceError(null)
     storeApi.get().setVoiceStatus('sending')
     await storeApi.get().sendUserMessage({ text: finalTranscript })
-    const reply = assistantReplyText()
-    if (reply !== null && storeApi.get().voiceEnabled) {
-      const { ttsSession } = await import('./tts-session')
-      await ttsSession.speak(reply).catch((error) => {
-        storeApi.get().setVoiceError(errorDetail(error, 'Voice playback failed.'))
-      })
-    }
     storeApi.get().setVoiceStatus('idle')
   } catch (error) {
     await cleanupTurn(turn)

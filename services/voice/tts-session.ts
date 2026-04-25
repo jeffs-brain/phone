@@ -57,16 +57,25 @@ export const ttsSession = {
     storeApi.get().setVoiceStatus('speaking')
     storeApi.get().setVoiceError(null)
 
+    let failed = false
     try {
       await player.start()
       await client.speak(text, options.signal)
       await player.finish()
+    } catch (error) {
+      failed = true
+      storeApi.get().setVoiceStatus('error')
+      storeApi.get().setVoiceError(error instanceof Error ? error.message : 'Voice playback failed.')
+      throw error
     } finally {
       if (activeSpeech?.id === id) activeSpeech = null
       storeApi.get().advanceTts()
       storeApi.get().setTtsRequestId(null)
       client.close()
       await player.stop()
+      if (!failed && storeApi.get().voiceStatus === 'speaking') {
+        storeApi.get().setVoiceStatus('idle')
+      }
     }
   },
 
@@ -79,5 +88,8 @@ export const ttsSession = {
     void speech.player.stop()
     storeApi.get().advanceTts()
     storeApi.get().setTtsRequestId(null)
+    if (storeApi.get().voiceStatus === 'speaking') {
+      storeApi.get().setVoiceStatus('idle')
+    }
   },
 }

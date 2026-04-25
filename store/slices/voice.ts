@@ -1,6 +1,7 @@
 import type { Slice } from '../types'
 
 export type TtsItem = { id: string; text: string; messageId: string }
+export type SpeakMessageInput = { messageId: string; text: string }
 export type MicPermission = 'unknown' | 'granted' | 'denied'
 export type VoiceStatus =
   | 'idle'
@@ -29,6 +30,8 @@ export type VoiceSlice = {
   startRecording: () => Promise<void>
   stopRecording: () => Promise<void>
   cancelVoice: () => Promise<void>
+  speakMessage: (input: SpeakMessageInput) => Promise<void>
+  stopSpeech: () => void
   setVoiceStatus: (status: VoiceStatus) => void
   setMicPermission: (permission: MicPermission) => void
   setRecording: (recording: boolean) => void
@@ -70,6 +73,15 @@ export const createVoiceSlice: Slice<VoiceSlice> = (set) => ({
   cancelVoice: async () => {
     const { voiceSession } = await import('../../services/voice/session')
     await voiceSession.cancelTurn()
+  },
+  speakMessage: async (input) => {
+    const { ttsSession } = await import('../../services/voice/tts-session')
+    await ttsSession.speak(input)
+  },
+  stopSpeech: () => {
+    void import('../../services/voice/tts-session').then(({ ttsSession }) => {
+      ttsSession.stop()
+    })
   },
 
   setVoiceStatus: (voiceStatus) => set({ voiceStatus }, false, 'voice/setVoiceStatus'),

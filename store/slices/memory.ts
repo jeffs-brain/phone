@@ -26,14 +26,12 @@ export type ToolLogEntry = {
 }
 
 export type MemorySlice = {
-  preContextHits: RecallHit[]
   memoryNotes: MemoryNoteSummary[]
   memoryNotesStatus: MemoryNotesStatus
   memoryNotesError: string | null
   toolLog: ToolLogEntry[]
   lastExtractionSummary: string | null
   recentRecall: RecallHit[]
-  setPreContext: (hits: RecallHit[]) => void
   setMemoryNotes: (notes: MemoryNoteSummary[]) => void
   setMemoryNotesStatus: (status: MemoryNotesStatus) => void
   setMemoryNotesError: (error: string | null) => void
@@ -44,7 +42,6 @@ export type MemorySlice = {
 }
 
 export const createMemorySlice: Slice<MemorySlice> = (set) => ({
-  preContextHits: [],
   memoryNotes: [],
   memoryNotesStatus: 'idle',
   memoryNotesError: null,
@@ -52,7 +49,6 @@ export const createMemorySlice: Slice<MemorySlice> = (set) => ({
   lastExtractionSummary: null,
   recentRecall: [],
 
-  setPreContext: (preContextHits) => set({ preContextHits }, false, 'memory/setPreContext'),
   setMemoryNotes: (memoryNotes) => set({ memoryNotes }, false, 'memory/setMemoryNotes'),
   setMemoryNotesStatus: (memoryNotesStatus) =>
     set({ memoryNotesStatus }, false, 'memory/setMemoryNotesStatus'),
@@ -62,5 +58,5 @@ export const createMemorySlice: Slice<MemorySlice> = (set) => ({
     set((s) => ({ toolLog: [...s.toolLog, entry].slice(-200) }), false, 'memory/appendToolLog'),
   setLastExtraction: (lastExtractionSummary) => set({ lastExtractionSummary }, false, 'memory/setLastExtraction'),
   setRecentRecall: (recentRecall) => set({ recentRecall }, false, 'memory/setRecentRecall'),
-  clearTurn: () => set({ preContextHits: [], toolLog: [] }, false, 'memory/clearTurn'),
+  clearTurn: () => set({ toolLog: [] }, false, 'memory/clearTurn'),
 })
