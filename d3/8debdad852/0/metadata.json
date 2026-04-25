@@ -1,0 +1,68 @@
+{
+  "cli_version": "0.5.6",
+  "checkpoint_id": "d38debdad852",
+  "session_id": "019dc4c3-90b8-75e0-9e4a-0f51a6896161",
+  "strategy": "manual-commit",
+  "created_at": "2026-04-25T15:13:03.82202Z",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "store/types.ts",
+    "store/slices/chat.ts",
+    "app/index.tsx",
+    "services/inference.ts",
+    "lib/constants.ts"
+  ],
+  "agent": "Codex",
+  "model": "gpt-5.5",
+  "turn_id": "2a309cba4588",
+  "checkpoint_transcript_start": 2221,
+  "transcript_lines_at_start": 2221,
+  "token_usage": {
+    "input_tokens": 578895,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 12981248,
+    "output_tokens": 25197,
+    "api_call_count": 100
+  },
+  "session_metrics": {
+    "turn_count": 5
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-04-25T15:13:03.599789Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 88,
+    "total_committed": 0,
+    "total_lines_changed": 88,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 793,
+      "user_lines_removed": 88,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "app/index.tsx": 609,
+        "bun.lock": 3,
+        "lib/constants.ts": 4,
+        "package.json": 1,
+        "services/inference.ts": 90,
+        "store/slices/chat.ts": 78,
+        "store/types.ts": 8
+      },
+      "user_removed_per_file": {
+        "app/index.tsx": 53,
+        "lib/constants.ts": 1,
+        "services/inference.ts": 25,
+        "store/slices/chat.ts": 6,
+        "store/types.ts": 3
+      }
+    }
+  ]
+}
