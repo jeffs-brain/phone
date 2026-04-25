@@ -1,0 +1,70 @@
+{
+  "cli_version": "0.5.6",
+  "checkpoint_id": "53e739d0cd11",
+  "session_id": "019dc4c3-90b8-75e0-9e4a-0f51a6896161",
+  "strategy": "manual-commit",
+  "created_at": "2026-04-25T16:02:37.158932Z",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    ".env.example",
+    "app/index.tsx",
+    "app/settings.tsx",
+    "lib/constants.ts",
+    "services/inference.ts",
+    "services/memory.ts",
+    "store/slices/chat.ts",
+    "store/types.ts"
+  ],
+  "agent": "Codex",
+  "model": "gpt-5.5",
+  "turn_id": "5e05a24d6b6b",
+  "checkpoint_transcript_start": 2830,
+  "transcript_lines_at_start": 2830,
+  "token_usage": {
+    "input_tokens": 1407381,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 27261696,
+    "output_tokens": 55543,
+    "api_call_count": 198
+  },
+  "session_metrics": {
+    "turn_count": 5
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-04-25T16:02:36.726021Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 221,
+    "human_modified": 95,
+    "human_removed": 0,
+    "total_committed": 221,
+    "total_lines_changed": 316,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 356,
+      "user_lines_removed": 57,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".env.example": 3,
+        "app/index.tsx": 74,
+        "app/settings.tsx": 1,
+        "lib/constants.ts": 9,
+        "services/inference.ts": 102,
+        "services/memory.ts": 165,
+        "store/slices/chat.ts": 1,
+        "store/types.ts": 1
+      },
+      "user_removed_per_file": {
+        "app/index.tsx": 31,
+        "lib/constants.ts": 3,
+        "services/inference.ts": 23
+      }
+    }
+  ]
+}

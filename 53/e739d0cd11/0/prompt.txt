@@ -1,0 +1,29 @@
+we need to pick up where we left off on the implementation plan then. this seems to be working now, i am getting response and it seems actually pretty fast. i can open the image picker however i cant press the blue tick and use the image. anyway, lets pickup where we left off
+
+---
+
+i cant actually get out of the image picker at all and back to the app.
+
+---
+
+the file selector works, but i want to be able to select images from the photo library too, this was working it just wasnt doing anything.
+
+---
+
+[Image #1] when i give it an image to tell me what is in it, the model is loaded, but doesnt show as being the one in use and also just hangs for ages, even crashing eventually... not sure what is happening there
+
+---
+
+what do you mean it returns a controlled response? i want it to work, not crash.
+
+---
+
+i suppose what is a bit confusing is why we need the additinal model, isnt gemma4 multimodal by default, also whateevr we are using now, hasnt crashed yet but it isntworking or responding
+
+---
+
+my bad it did respond - eventually, but it is taking forever. so question above still applies
+
+---
+
+[Image #1]
