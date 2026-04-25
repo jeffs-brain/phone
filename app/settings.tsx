@@ -4,6 +4,7 @@ import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-nat
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { INFERENCE_CONFIG } from '../lib/constants'
+import { colors, radius, shadows, spacing, typography } from '../lib/theme'
 import { memoryService } from '../services/memory'
 import { useStore } from '../store'
 import type { ModelId, ModelStatus } from '../store/slices/inference'
@@ -67,10 +68,10 @@ const simulatorMultimodalDetail = (): string => {
 }
 
 const modelActionLabel = (modelStatus: ModelStatus): string => {
-  if (modelStatus === 'error') return 'Retry model'
-  if (BUSY_MODEL_STATUSES.includes(modelStatus)) return 'Working...'
-  if (modelStatus === 'ready') return 'Reload model'
-  return 'Load model'
+  if (modelStatus === 'error') return '🔄 Retry'
+  if (BUSY_MODEL_STATUSES.includes(modelStatus)) return '⏳ Working...'
+  if (modelStatus === 'ready') return '🔄 Reload'
+  return '📦 Load model'
 }
 
 const friendlyModelError = (error: string): string => {
@@ -117,7 +118,7 @@ function ToggleRow({
         <Text style={styles.optionLabel}>{label}</Text>
         <Text style={styles.optionDetail}>{detail}</Text>
       </View>
-      <Switch value={value} onValueChange={onValueChange} />
+      <Switch value={value} onValueChange={onValueChange} trackColor={{ false: '#EDE8E4', true: '#12B89E' }} />
     </View>
   )
 }
@@ -227,9 +228,8 @@ export default function Settings() {
   const startNewThread = useStore((s) => s.startNewThread)
   const modelBusy = BUSY_MODEL_STATUSES.includes(modelStatus)
   const generationBusy = ACTIVE_GENERATION_STATUSES.includes(generationStatus)
-  const downloadDetail = formatDownload(downloadBytes)
-  const modelStatusDetail = downloadDetail ?? (modelError === null ? undefined : friendlyModelError(modelError))
   const selectedModel = modelLabel(modelSize)
+  const modelStatusDetail = modelError === null ? undefined : friendlyModelError(modelError)
   const memoryLoading = memoryNotesStatus === 'loading'
 
   useEffect(() => {
@@ -267,21 +267,18 @@ export default function Settings() {
     >
       <View style={styles.header}>
         <View style={styles.headerCopy}>
-          <Text style={styles.eyebrow}>Jeff Phone</Text>
           <Text style={styles.title}>Settings</Text>
-          <Text style={styles.subtitle}>Model status: {modelStatus}</Text>
-          {downloadDetail === null ? null : <Text style={styles.subtitle}>{downloadDetail}</Text>}
         </View>
         <Pressable
           accessibilityRole="button"
           onPress={handleDone}
           style={({ pressed }) => [styles.doneButton, pressed ? styles.pressed : null]}
         >
-          <Text style={styles.doneText}>Done</Text>
+          <Text style={styles.doneText}>✓ Done</Text>
         </Pressable>
       </View>
 
-      <Section title="Local Model">
+      <Section title="📦 AI Model">
         {MODEL_OPTIONS.map((option) => (
           <OptionButton
             key={option.value}
@@ -294,20 +291,22 @@ export default function Settings() {
         ))}
         <View style={styles.actionRow}>
           <ActionButton label={modelActionLabel(modelStatus)} onPress={handleLoadModel} disabled={modelBusy} />
-          <ActionButton label="Unload" onPress={handleUnloadModel} muted disabled={modelBusy || generationBusy} />
+          <ActionButton label="📤 Unload" onPress={handleUnloadModel} muted disabled={modelBusy || generationBusy} />
         </View>
-        {modelError === null ? null : <Text style={styles.errorText}>{friendlyModelError(modelError)}</Text>}
+        {modelError === null ? null : <Text style={styles.errorText}>⚠️ {friendlyModelError(modelError)}</Text>}
       </Section>
 
-      <Section title="Runtime Diagnostics">
-        <DiagnosticRow label="Runtime profile" value={runtimeProfileLabel()} />
-        <DiagnosticRow label="Selected model" value={selectedModel} detail={modelSize} />
-        <DiagnosticRow label="Model status" value={formatStatusValue(modelStatus)} detail={modelStatusDetail} />
-        <DiagnosticRow label="Generation status" value={formatStatusValue(generationStatus)} />
-        <Text style={styles.diagnosticNote}>{simulatorMultimodalDetail()}</Text>
-      </Section>
+      {devMode ? (
+        <Section title="🔍 Developer">
+          <DiagnosticRow label="Runtime profile" value={runtimeProfileLabel()} />
+          <DiagnosticRow label="Selected model" value={selectedModel} detail={modelSize} />
+          <DiagnosticRow label="Model status" value={formatStatusValue(modelStatus)} detail={modelStatusDetail} />
+          <DiagnosticRow label="Generation status" value={formatStatusValue(generationStatus)} />
+          <Text style={styles.diagnosticNote}>{simulatorMultimodalDetail()}</Text>
+        </Section>
+      ) : null}
 
-      <Section title="Memory">
+      <Section title="🧠 Memory">
         <View style={styles.summaryPanel}>
           <View style={styles.summaryCopy}>
             <Text style={styles.optionLabel}>Stored memories</Text>
@@ -315,9 +314,9 @@ export default function Settings() {
           </View>
         </View>
         <View style={styles.actionRow}>
-          <ActionButton label="Manage memories" onPress={handleOpenMemories} />
+          <ActionButton label="🧠 Manage" onPress={handleOpenMemories} />
           <ActionButton
-            label={memoryLoading ? 'Refreshing' : 'Refresh'}
+            label={memoryLoading ? '🔄 Refreshing' : '🔄 Refresh'}
             onPress={handleRefreshMemories}
             muted
             disabled={memoryLoading}
@@ -326,10 +325,10 @@ export default function Settings() {
         {lastExtractionSummary === null ? null : (
           <DiagnosticRow label="Last extraction" value={lastExtractionSummary} />
         )}
-        {memoryNotesError === null ? null : <Text style={styles.errorText}>{memoryNotesError}</Text>}
+        {memoryNotesError === null ? null : <Text style={styles.errorText}>⚠️ {memoryNotesError}</Text>}
       </Section>
 
-      <Section title="Provider Mode">
+      <Section title="🔀 Provider">
         <View style={styles.segmented}>
           <Pressable
             accessibilityRole="button"
@@ -337,7 +336,7 @@ export default function Settings() {
             style={[styles.segment, providerMode === 'manual' ? styles.selectedSegment : null]}
           >
             <Text style={[styles.segmentText, providerMode === 'manual' ? styles.selectedSegmentText : null]}>
-              Manual
+              🔧 Manual
             </Text>
           </Pressable>
           <Pressable
@@ -346,7 +345,7 @@ export default function Settings() {
             style={[styles.segment, providerMode === 'smart' ? styles.selectedSegment : null]}
           >
             <Text style={[styles.segmentText, providerMode === 'smart' ? styles.selectedSegmentText : null]}>
-              Smart
+              🤖 Smart
             </Text>
           </Pressable>
         </View>
@@ -363,7 +362,7 @@ export default function Settings() {
         ))}
       </Section>
 
-      <Section title="Conversation">
+      <Section title="💬 Conversation">
         <ToggleRow
           label="Voice"
           detail="Mic uses Gradium STT; assistant replies can be played from each message"
@@ -382,7 +381,7 @@ export default function Settings() {
           value={devMode}
           onValueChange={setDevMode}
         />
-        <ActionButton label="New chat" onPress={startNewThread} muted />
+        <ActionButton label="✨ New chat" onPress={startNewThread} muted />
       </Section>
     </ScrollView>
   )
@@ -390,11 +389,11 @@ export default function Settings() {
 
 const styles = StyleSheet.create({
   root: {
-    backgroundColor: '#080a0f',
+    backgroundColor: colors.bg.grouped,
     flex: 1,
   },
   content: {
-    paddingHorizontal: 18,
+    paddingHorizontal: 20,
   },
   header: {
     alignItems: 'center',
@@ -406,84 +405,69 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingRight: 14,
   },
-  eyebrow: {
-    color: '#8b93a7',
-    fontSize: 12,
+  title: {
+    color: colors.text.primary,
+    fontSize: 34,
     fontWeight: '700',
     letterSpacing: 0,
-    textTransform: 'uppercase',
-  },
-  title: {
-    color: '#f6f7fb',
-    fontSize: 31,
-    fontWeight: '800',
-    letterSpacing: 0,
-    marginTop: 2,
-  },
-  subtitle: {
-    color: '#9aa3b5',
-    fontSize: 13,
-    marginTop: 3,
   },
   doneButton: {
-    backgroundColor: '#171b25',
-    borderColor: '#2d3444',
-    borderRadius: 8,
-    borderWidth: 1,
-    minHeight: 40,
-    justifyContent: 'center',
     paddingHorizontal: 14,
+    paddingVertical: 8,
   },
   doneText: {
-    color: '#f4f7fb',
-    fontSize: 14,
-    fontWeight: '800',
+    color: colors.accent.teal,
+    fontSize: 17,
+    fontWeight: '600',
   },
   section: {
-    borderTopColor: '#1c2230',
-    borderTopWidth: 1,
-    gap: 10,
-    paddingVertical: 18,
+    backgroundColor: colors.bg.card,
+    borderRadius: radius.md,
+    gap: 12,
+    marginBottom: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+    ...shadows[1],
   },
   sectionTitle: {
-    color: '#f4f7fb',
-    fontSize: 16,
-    fontWeight: '800',
+    color: colors.text.primary,
+    fontSize: 17,
+    fontWeight: '600',
     marginBottom: 2,
   },
   optionButton: {
-    backgroundColor: '#10141d',
-    borderColor: '#252b3a',
-    borderRadius: 8,
+    backgroundColor: colors.bg.card,
+    borderColor: colors.divider,
+    borderRadius: radius.sm,
     borderWidth: 1,
     paddingHorizontal: 13,
     paddingVertical: 12,
   },
   selectedOption: {
-    backgroundColor: '#16231f',
-    borderColor: '#3f8f7d',
+    backgroundColor: colors.button.selected.bg,
+    borderColor: colors.button.selected.border,
   },
   optionLabel: {
-    color: '#f4f7fb',
+    color: colors.text.primary,
     fontSize: 15,
-    fontWeight: '800',
+    fontWeight: '600',
   },
   selectedOptionText: {
-    color: '#c8f7e8',
+    color: colors.accent.teal,
   },
   optionDetail: {
-    color: '#9aa3b5',
+    color: colors.text.secondary,
     fontSize: 13,
     lineHeight: 18,
     marginTop: 3,
   },
   selectedOptionDetail: {
-    color: '#8fcbb9',
+    color: colors.accent.teal,
   },
   summaryPanel: {
-    backgroundColor: '#10141d',
-    borderColor: '#252b3a',
-    borderRadius: 8,
+    backgroundColor: colors.bg.card,
+    borderColor: colors.divider,
+    borderRadius: radius.md,
     borderWidth: 1,
     paddingHorizontal: 13,
     paddingVertical: 12,
@@ -497,70 +481,64 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     alignItems: 'center',
-    backgroundColor: '#16231f',
-    borderColor: '#3f8f7d',
-    borderWidth: 1,
-    borderRadius: 8,
+    backgroundColor: colors.accent.teal,
+    borderRadius: radius.sm,
     flex: 1,
     minHeight: 44,
     justifyContent: 'center',
     paddingHorizontal: 12,
   },
   actionText: {
-    color: '#c8f7e8',
+    color: colors.text.onAccent,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '600',
   },
   mutedButton: {
-    backgroundColor: '#171b25',
-    borderColor: '#2d3444',
-    borderWidth: 1,
+    backgroundColor: colors.bg.secondary,
   },
   disabledButton: {
     opacity: 0.52,
   },
   mutedActionText: {
-    color: '#f4f7fb',
+    color: colors.text.primary,
   },
   disabledText: {
-    color: '#9aa3b5',
+    color: colors.text.secondary,
   },
   errorText: {
-    color: '#ff9b9b',
+    color: colors.accent.error,
     fontSize: 13,
     lineHeight: 18,
   },
   segmented: {
-    backgroundColor: '#10141d',
-    borderColor: '#252b3a',
-    borderRadius: 8,
-    borderWidth: 1,
+    backgroundColor: colors.bg.secondary,
+    borderRadius: radius.md,
     flexDirection: 'row',
     padding: 4,
   },
   segment: {
     alignItems: 'center',
-    borderRadius: 6,
+    borderRadius: radius.sm,
     flex: 1,
-    minHeight: 40,
+    minHeight: 44,
     justifyContent: 'center',
   },
   selectedSegment: {
-    backgroundColor: '#f4f7fb',
+    backgroundColor: colors.accent.teal,
   },
   segmentText: {
-    color: '#9aa3b5',
+    color: colors.text.secondary,
     fontSize: 14,
-    fontWeight: '800',
+    fontWeight: '600',
   },
   selectedSegmentText: {
-    color: '#07110f',
+    color: colors.text.onAccent,
   },
   toggleRow: {
     alignItems: 'center',
-    backgroundColor: '#10141d',
-    borderColor: '#252b3a',
-    borderRadius: 8,
+    backgroundColor: colors.bg.card,
+    borderColor: colors.divider,
+    borderRadius: radius.sm,
     borderWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -573,34 +551,34 @@ const styles = StyleSheet.create({
     paddingRight: 12,
   },
   diagnosticRow: {
-    backgroundColor: '#10141d',
-    borderColor: '#252b3a',
-    borderRadius: 8,
+    backgroundColor: colors.bg.card,
+    borderColor: colors.divider,
+    borderRadius: radius.sm,
     borderWidth: 1,
     paddingHorizontal: 13,
     paddingVertical: 11,
   },
   diagnosticLabel: {
-    color: '#8b93a7',
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0,
+    color: colors.text.secondary,
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.8,
     textTransform: 'uppercase',
   },
   diagnosticValue: {
-    color: '#f4f7fb',
+    color: colors.text.primary,
     fontSize: 15,
-    fontWeight: '800',
+    fontWeight: '600',
     marginTop: 4,
   },
   diagnosticDetail: {
-    color: '#9aa3b5',
+    color: colors.text.secondary,
     fontSize: 13,
     lineHeight: 18,
     marginTop: 3,
   },
   diagnosticNote: {
-    color: '#9aa3b5',
+    color: colors.text.secondary,
     fontSize: 13,
     lineHeight: 18,
   },

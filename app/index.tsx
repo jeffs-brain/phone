@@ -24,6 +24,8 @@ import {
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
+import { hapticAttachment, hapticButton, hapticSend } from '../lib/haptics'
+import { colors, radius, shadows, spacing, typography } from '../lib/theme'
 import { useStore } from '../store'
 import type { ModelStatus } from '../store/slices/inference'
 import type { VoiceStatus } from '../store/slices/voice'
@@ -57,12 +59,12 @@ const MODEL_STATUS_LABELS: Record<ModelStatus, string> = {
 
 const GENERATION_STATUS_LABELS: Record<GenerationStatus, string> = {
   idle: 'Idle',
-  routing: 'Routing',
+  routing: '\u{1F500} Routing',
   'preparing-vision': 'Preparing vision',
   'loading-first-token': 'Loading first token',
-  thinking: 'Thinking',
-  'using-tools': 'Using tools',
-  streaming: 'Streaming',
+  thinking: '\u{1F914} Thinking',
+  'using-tools': '\u{1F527} Using tools',
+  streaming: '⚡ Streaming',
   done: 'Done',
   error: 'Generation error',
 }
@@ -71,11 +73,11 @@ const VOICE_STATUS_LABELS: Record<VoiceStatus, string> = {
   idle: 'Voice ready',
   'requesting-permission': 'Requesting mic',
   connecting: 'Connecting to Gradium',
-  listening: 'Listening',
+  listening: '\u{1F442} Listening',
   'ending-turn': 'Ending turn',
-  transcribing: 'Transcribing',
+  transcribing: '✍️ Transcribing',
   sending: 'Sending to Jeff',
-  speaking: 'Speaking',
+  speaking: '\u{1F50A} Speaking',
   error: 'Voice error',
 }
 
@@ -125,6 +127,17 @@ const TEXT_FILE_EXTENSIONS = [
 ] as const
 const SUPPORTED_LLAMA_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.bmp', '.gif'] as const
 const SUPPORTED_LLAMA_IMAGE_MIME_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/bmp', 'image/gif'] as const
+
+const STATUS_DOT_COLOURS: Record<string, string> = {
+  ready: colors.accent.success,
+  downloading: colors.accent.warning,
+  checking: colors.accent.warning,
+  verifying: colors.accent.warning,
+  loaded: colors.accent.warning,
+  initialised: colors.accent.warning,
+  error: colors.accent.error,
+  unloaded: colors.text.muted,
+}
 
 type ThinkingDetail = {
   readonly status: string
@@ -390,11 +403,30 @@ function ProviderBadge({
   )
 }
 
-function EmptyState() {
+function EmptyState({ onSuggestion }: { readonly onSuggestion: (text: string) => void }) {
   return (
     <View style={styles.emptyState}>
-      <Text style={styles.emptyTitle}>Jeff is ready for a chat.</Text>
-      <Text style={styles.emptyCopy}>Ask something, test routing, or load a local model from settings first.</Text>
+      <View style={styles.emptyAvatar}>
+        <Text style={styles.emptyAvatarText}>J</Text>
+      </View>
+      <Text style={styles.emptyTitle}>Hey, I'm Jeff {'\u{1F4AC}'}</Text>
+      <Text style={styles.emptyCopy}>Your private on-device brain. Everything stays on this phone.</Text>
+      <View style={styles.suggestionRow}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => { hapticButton(); onSuggestion('Tell me something interesting') }}
+          style={({ pressed }) => [styles.suggestionChip, pressed ? styles.pressed : null]}
+        >
+          <Text style={styles.suggestionChipText}>Tell me something interesting</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => { hapticButton(); onSuggestion('What can you do?') }}
+          style={({ pressed }) => [styles.suggestionChip, pressed ? styles.pressed : null]}
+        >
+          <Text style={styles.suggestionChipText}>What can you do?</Text>
+        </Pressable>
+      </View>
     </View>
   )
 }
@@ -403,7 +435,7 @@ function GlassSurface({
   children,
   style,
   effect = 'regular',
-  tintColor = 'rgba(16, 20, 29, 0.72)',
+  tintColor = 'rgba(243, 239, 236, 0.72)',
 }: GlassSurfaceProps) {
   const surfaceStyle = [
     styles.glassSurface,
@@ -414,7 +446,7 @@ function GlassSurface({
   if (isLiquidGlassSupported) {
     return (
       <LiquidGlassView
-        colorScheme="dark"
+        colorScheme="light"
         effect={effect}
         interactive
         style={surfaceStyle}
@@ -447,7 +479,7 @@ function ThinkingDisclosure({ thinking }: { thinking: ThinkingDetail }) {
       >
         <Text style={styles.thinkingStatus}>{thinking.status}</Text>
         {hasDetail ? (
-          <Text style={styles.thinkingToggleText}>{expanded ? 'Hide' : 'Show'}</Text>
+          <Text style={styles.thinkingToggleText}>{expanded ? '▼' : '▶'}</Text>
         ) : null}
       </Pressable>
       {expanded && hasDetail ? (
@@ -514,10 +546,10 @@ function StagedAttachmentTray({
         </Text>
         <Pressable
           accessibilityRole="button"
-          onPress={onClear}
+          onPress={() => { hapticButton(); onClear() }}
           style={({ pressed }) => [styles.clearStagedButton, pressed ? styles.pressed : null]}
         >
-          <Text style={styles.clearStagedText}>Clear</Text>
+          <Text style={styles.clearStagedText}>{'\u{1F5D1}️'}</Text>
         </Pressable>
       </View>
       <ScrollView
@@ -564,6 +596,7 @@ function MessageBubble({ message }: { message: Message }) {
     }
 
     if (speechDisabled) return
+    hapticButton()
     void speakMessage({ messageId: message.id, text })
   }, [isSpeakingThisMessage, message.id, speakMessage, speechDisabled, stopSpeech, text])
 
@@ -576,9 +609,6 @@ function MessageBubble({ message }: { message: Message }) {
         message.role === 'system' ? styles.systemBubble : null,
       ]}>
         <View style={styles.messageMetaRow}>
-          <Text style={[styles.messageRole, isUser ? styles.userMessageRole : null]}>
-            {getRoleLabel(message.role)}
-          </Text>
           <View style={styles.messageMetaActions}>
             {canSpeakMessage ? (
               <Pressable
@@ -599,7 +629,7 @@ function MessageBubble({ message }: { message: Message }) {
                   isSpeakingThisMessage ? styles.speechButtonTextActive : null,
                   speechDisabled ? styles.speechButtonTextDisabled : null,
                 ]}>
-                  {isSpeakingThisMessage ? 'Stop' : 'Play'}
+                  {isSpeakingThisMessage ? '⏹️' : '\u{1F50A}'}
                 </Text>
               </Pressable>
             ) : null}
@@ -695,6 +725,11 @@ export default function Chat() {
     [downloadBytes, modelError, modelSize, modelStatus],
   )
 
+  const statusDotColour = STATUS_DOT_COLOURS[modelStatus] ?? colors.text.muted
+  const statusPillLabel = generationActive
+    ? `${MODEL_STATUS_LABELS[modelStatus]} · ${GENERATION_STATUS_LABELS[generationStatus].toLowerCase()}`
+    : MODEL_STATUS_LABELS[modelStatus]
+
   useEffect(() => {
     if (storeHydrated) return undefined
     const unsubscribe = useStore.persist.onFinishHydration(() => setStoreHydrated(true))
@@ -715,14 +750,27 @@ export default function Chat() {
 
   const handleSend = useCallback(() => {
     if (!canSend) return
+    hapticSend()
     setActionError(null)
     void sendUserMessage().catch(() => {
       setActionError('Could not send that message.')
     })
   }, [canSend, sendUserMessage])
 
+  const handleSuggestion = useCallback((text: string) => {
+    setDraft(text)
+    setActionError(null)
+    hapticSend()
+    requestAnimationFrame(() => {
+      void sendUserMessage().catch(() => {
+        setActionError('Could not send that message.')
+      })
+    })
+  }, [sendUserMessage, setDraft])
+
   const handlePickImage = useCallback(() => {
     setActionError(null)
+    hapticAttachment()
 
     void (async () => {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -761,6 +809,7 @@ export default function Chat() {
 
   const handlePickFile = useCallback(() => {
     setActionError(null)
+    hapticAttachment()
 
     void (async () => {
       const result = await DocumentPicker.getDocumentAsync({
@@ -808,12 +857,14 @@ export default function Chat() {
 
   const handleCancel = useCallback(() => {
     setActionError(null)
+    hapticButton()
     cancelGeneration()
   }, [cancelGeneration])
 
   const handleMic = useCallback(() => {
     if (!voiceCanPress) return
 
+    hapticButton()
     setActionError(null)
     const action = voiceStatus === 'listening'
       ? stopRecording()
@@ -829,11 +880,13 @@ export default function Chat() {
   }, [cancelVoice, startRecording, stopRecording, voiceCanPress, voiceStatus])
 
   const handleOpenMemories = useCallback(() => {
+    hapticButton()
     router.push('/memories')
   }, [router])
 
   const handleNewThread = useCallback(() => {
     if (generationActive) return
+    hapticButton()
     const start = (): void => {
       setActionError(null)
       startNewThread()
@@ -854,6 +907,7 @@ export default function Chat() {
 
   const handleRetryModel = useCallback(() => {
     setActionError(null)
+    hapticButton()
     void loadModel(modelSize).catch(() => {
       setActionError('Could not load the local model.')
     })
@@ -861,6 +915,7 @@ export default function Chat() {
 
   const handleUseSmallerModel = useCallback(() => {
     setActionError(null)
+    hapticButton()
     setModelSize('gemma-4-E2B')
     void loadModel('gemma-4-E2B').catch(() => {
       setActionError('Could not load Gemma 4 E2B.')
@@ -870,6 +925,11 @@ export default function Chat() {
   const renderMessage = useCallback(
     ({ item }: ListRenderItemInfo<Message>) => <MessageBubble message={item} />,
     [],
+  )
+
+  const renderEmptyState = useCallback(
+    () => <EmptyState onSuggestion={handleSuggestion} />,
+    [handleSuggestion],
   )
 
   return (
@@ -884,86 +944,78 @@ export default function Chat() {
         </View>
         <View style={styles.headerActions}>
           <Pressable
+            accessibilityLabel="New chat"
             accessibilityRole="button"
             accessibilityState={{ disabled: generationActive }}
             disabled={generationActive}
             onPress={handleNewThread}
             style={({ pressed }) => [
-              styles.headerButton,
+              styles.headerIconButton,
               generationActive ? styles.disabledHeaderButton : null,
               pressed ? styles.pressed : null,
             ]}
           >
-            <Text style={[styles.headerButtonText, generationActive ? styles.disabledHeaderButtonText : null]}>
-              New
-            </Text>
+            <Text style={styles.headerIconText}>{'✨'}</Text>
           </Pressable>
           <Pressable
+            accessibilityLabel="Memories"
             accessibilityRole="button"
             onPress={handleOpenMemories}
-            style={({ pressed }) => [styles.headerButton, styles.brainButton, pressed ? styles.pressed : null]}
+            style={({ pressed }) => [styles.headerIconButton, pressed ? styles.pressed : null]}
           >
-            <Text style={[styles.headerButtonText, styles.brainButtonText]}>Brain</Text>
+            <Text style={styles.headerIconText}>{'\u{1F9E0}'}</Text>
           </Pressable>
           <Pressable
+            accessibilityLabel="Settings"
             accessibilityRole="button"
-            onPress={() => router.push('/settings')}
-            style={({ pressed }) => [styles.headerButton, pressed ? styles.pressed : null]}
+            onPress={() => { hapticButton(); router.push('/settings') }}
+            style={({ pressed }) => [styles.headerIconButton, pressed ? styles.pressed : null]}
           >
-            <Text style={styles.headerButtonText}>Settings</Text>
+            <Text style={styles.headerIconText}>{'⚙️'}</Text>
           </Pressable>
         </View>
       </View>
 
-      <GlassSurface effect="clear" style={styles.statusPanel} tintColor="rgba(16, 20, 29, 0.64)">
-        <ProviderBadge decision={lastDecision} modelSize={modelId ?? modelSize} />
-        <View style={styles.statusDivider} />
-        <View style={styles.modelStatus}>
-          <View style={styles.statusHeadingRow}>
-            <Text style={styles.statusLabel}>{MODEL_STATUS_LABELS[modelStatus]}</Text>
-            {modelStatus === 'checking' ||
-            modelStatus === 'downloading' ||
-            modelStatus === 'verifying' ||
-            modelStatus === 'loaded' ||
-            modelStatus === 'initialised' ? (
-              <ActivityIndicator color="#8be9d4" size="small" />
-            ) : null}
-          </View>
-          <Text style={styles.statusDetail}>{modelDetail}</Text>
-          <Text style={styles.generationStatus}>
-            {generationActive ? 'Now ' : ''}{GENERATION_STATUS_LABELS[generationStatus].toLowerCase()}
-          </Text>
-          {modelStatus === 'error' ? (
-            <View style={styles.statusActions}>
-              <Pressable
-                accessibilityRole="button"
-                onPress={handleRetryModel}
-                style={({ pressed }) => [styles.statusActionButton, pressed ? styles.pressed : null]}
-              >
-                <Text style={styles.statusActionText}>Retry</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={handleUseSmallerModel}
-                style={({ pressed }) => [
-                  styles.statusActionButton,
-                  styles.secondaryStatusActionButton,
-                  pressed ? styles.pressed : null,
-                ]}
-              >
-                <Text style={styles.secondaryStatusActionText}>Use E2B</Text>
-              </Pressable>
-            </View>
-          ) : null}
+      <View style={styles.statusPill}>
+        <View style={[styles.statusDot, { backgroundColor: statusDotColour }]} />
+        <Text style={styles.statusPillLabel} numberOfLines={1}>{statusPillLabel}</Text>
+        {(modelStatus === 'checking' ||
+          modelStatus === 'downloading' ||
+          modelStatus === 'verifying' ||
+          modelStatus === 'loaded' ||
+          modelStatus === 'initialised') ? (
+          <ActivityIndicator color={colors.accent.teal} size="small" />
+        ) : null}
+      </View>
+      {modelStatus === 'error' ? (
+        <View style={styles.statusErrorActions}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={handleRetryModel}
+            style={({ pressed }) => [styles.statusActionButton, pressed ? styles.pressed : null]}
+          >
+            <Text style={styles.statusActionText}>Retry</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={handleUseSmallerModel}
+            style={({ pressed }) => [
+              styles.statusActionButton,
+              styles.secondaryStatusActionButton,
+              pressed ? styles.pressed : null,
+            ]}
+          >
+            <Text style={styles.secondaryStatusActionText}>Use E2B</Text>
+          </Pressable>
         </View>
-      </GlassSurface>
+      ) : null}
 
       <FlatList
         ref={listRef}
         data={messages}
         keyExtractor={(item) => item.id}
         renderItem={renderMessage}
-        ListEmptyComponent={EmptyState}
+        ListEmptyComponent={renderEmptyState}
         onContentSizeChange={scrollToEnd}
         onLayout={scrollToEnd}
         keyboardShouldPersistTaps="handled"
@@ -974,7 +1026,7 @@ export default function Chat() {
       />
 
       <View style={[styles.composerWrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-        {actionError === null ? null : <Text style={styles.errorText}>{actionError}</Text>}
+        {actionError === null ? null : <Text style={styles.errorText}>{'⚠️'} {actionError}</Text>}
         {showVoiceTray ? (
           <View style={styles.voiceTray}>
             <View style={styles.voiceTrayHeader}>
@@ -992,14 +1044,14 @@ export default function Chat() {
           onClear={clearStaged}
           onRemove={handleRemoveStagedAttachment}
         />
-        <GlassSurface effect="regular" style={styles.composer} tintColor="rgba(16, 20, 29, 0.74)">
+        <GlassSurface effect="regular" style={styles.composer} tintColor="rgba(243, 239, 236, 0.74)">
           <TextInput
             multiline
             value={draft}
             onChangeText={setDraft}
             onSubmitEditing={handleSend}
             placeholder="Message Jeff"
-            placeholderTextColor="#737987"
+            placeholderTextColor={colors.text.muted}
             returnKeyType="send"
             submitBehavior="submit"
             style={styles.input}
@@ -1008,20 +1060,23 @@ export default function Chat() {
           <View style={styles.composerActions}>
             <View style={styles.attachmentActions}>
               <Pressable
+                accessibilityLabel="Attach photo"
                 accessibilityRole="button"
                 onPress={handlePickImage}
                 style={({ pressed }) => [styles.attachmentButton, pressed ? styles.pressed : null]}
               >
-                <Text style={styles.attachmentButtonText}>Photo</Text>
+                <Text style={styles.attachmentButtonText}>{'\u{1F5BC}️'}</Text>
               </Pressable>
               <Pressable
+                accessibilityLabel="Attach file"
                 accessibilityRole="button"
                 onPress={handlePickFile}
                 style={({ pressed }) => [styles.attachmentButton, pressed ? styles.pressed : null]}
               >
-                <Text style={styles.attachmentButtonText}>File</Text>
+                <Text style={styles.attachmentButtonText}>{'\u{1F4CE}'}</Text>
               </Pressable>
               <Pressable
+                accessibilityLabel={voiceStatus === 'listening' ? 'End recording' : voiceStatus === 'speaking' ? 'Stop speaking' : 'Start voice'}
                 accessibilityRole="button"
                 accessibilityState={{ disabled: !voiceCanPress, selected: voiceBusy }}
                 disabled={!voiceCanPress}
@@ -1039,12 +1094,12 @@ export default function Chat() {
                   !voiceCanPress ? styles.disabledAttachmentButtonText : null,
                 ]}>
                   {voiceStatus === 'listening'
-                    ? 'End'
+                    ? '⏹️'
                     : voiceStatus === 'speaking'
-                      ? 'Stop'
+                      ? '⏹️'
                     : voiceStatus === 'connecting' || voiceStatus === 'requesting-permission'
-                      ? 'Cancel'
-                      : 'Mic'}
+                      ? '✖️'
+                      : '\u{1F399}️'}
                 </Text>
               </Pressable>
             </View>
@@ -1054,7 +1109,7 @@ export default function Chat() {
                 onPress={handleCancel}
                 style={({ pressed }) => [styles.cancelButton, pressed ? styles.pressed : null]}
               >
-                <Text style={styles.cancelButtonText}>Stop</Text>
+                <Text style={styles.cancelButtonText}>{'⏹️'}</Text>
               </Pressable>
             ) : (
               <Pressable
@@ -1068,7 +1123,7 @@ export default function Chat() {
                   pressed ? styles.pressed : null,
                 ]}
               >
-                <Text style={[styles.sendButtonText, !canSend ? styles.disabledSendButtonText : null]}>Send</Text>
+                <Text style={[styles.sendButtonText, !canSend ? styles.disabledSendButtonText : null]}>{'⬆️'}</Text>
               </Pressable>
             )}
           </View>
@@ -1081,13 +1136,13 @@ export default function Chat() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#080a0f',
+    backgroundColor: colors.bg.root,
   },
   header: {
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingHorizontal: 18,
+    paddingHorizontal: 20,
     paddingBottom: 14,
   },
   titleGroup: {
@@ -1095,17 +1150,12 @@ const styles = StyleSheet.create({
     paddingRight: 12,
   },
   eyebrow: {
-    color: '#8b93a7',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0,
-    textTransform: 'uppercase',
+    ...typography.eyebrow,
+    color: colors.text.secondary,
   },
   title: {
-    color: '#f6f7fb',
-    fontSize: 32,
-    fontWeight: '700',
-    letterSpacing: 0,
+    ...typography.display,
+    color: colors.text.primary,
     marginTop: 2,
   },
   headerActions: {
@@ -1113,131 +1163,98 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
   },
-  headerButton: {
-    backgroundColor: '#171b25',
-    borderColor: '#2d3444',
-    borderRadius: 8,
-    borderWidth: 1,
-    minHeight: 40,
+  headerIconButton: {
+    alignItems: 'center',
+    backgroundColor: colors.button.ghost.bg,
+    borderRadius: radius.pill,
+    height: 40,
     justifyContent: 'center',
-    paddingHorizontal: 10,
+    width: 40,
   },
-  headerButtonText: {
-    color: '#f4f7fb',
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  brainButton: {
-    backgroundColor: '#16231f',
-    borderColor: '#3f8f7d',
-  },
-  brainButtonText: {
-    color: '#c8f7e8',
+  headerIconText: {
+    fontSize: 18,
   },
   disabledHeaderButton: {
     opacity: 0.52,
-  },
-  disabledHeaderButtonText: {
-    color: '#9aa3b5',
   },
   pressed: {
     opacity: 0.72,
   },
   glassSurface: {
-    backgroundColor: '#10141d',
-    borderColor: '#252b3a',
-    borderRadius: 8,
-    borderWidth: 1,
+    backgroundColor: colors.bg.card,
+    borderRadius: radius.lg,
     overflow: 'hidden',
   },
   glassSurfaceNative: {
     backgroundColor: 'transparent',
   },
   glassSurfaceFallback: {
-    backgroundColor: '#10141d',
+    backgroundColor: colors.bg.glass,
   },
-  statusPanel: {
-    marginHorizontal: 18,
-    padding: 12,
+  statusPill: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: colors.bg.card,
+    borderRadius: radius.pill,
+    flexDirection: 'row',
+    gap: spacing(2),
+    marginHorizontal: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    ...shadows[1],
+  },
+  statusDot: {
+    borderRadius: 4,
+    height: 8,
+    width: 8,
+  },
+  statusPillLabel: {
+    ...typography.caption,
+    color: colors.text.primary,
+    flexShrink: 1,
+  },
+  statusErrorActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginHorizontal: 20,
+    marginTop: 8,
+  },
+  statusActionButton: {
+    alignItems: 'center',
+    backgroundColor: colors.accent.teal,
+    borderRadius: radius.sm,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: 16,
+  },
+  secondaryStatusActionButton: {
+    backgroundColor: colors.bg.secondary,
+  },
+  statusActionText: {
+    color: colors.text.onAccent,
+    ...typography.bodyBold,
+  },
+  secondaryStatusActionText: {
+    color: colors.text.primary,
+    ...typography.bodyBold,
   },
   providerBadge: {
-    backgroundColor: '#16231f',
-    borderColor: '#2e5a4f',
-    borderRadius: 8,
-    borderWidth: 1,
+    backgroundColor: colors.button.selected.bg,
+    borderRadius: radius.sm,
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
   providerLabel: {
-    color: '#c8f7e8',
-    fontSize: 14,
-    fontWeight: '800',
+    color: colors.text.onAccentLight,
+    ...typography.bodyBold,
   },
   providerDetail: {
-    color: '#8fcbb9',
-    fontSize: 12,
+    color: colors.text.secondary,
+    ...typography.caption,
     marginTop: 3,
   },
-  statusDivider: {
-    backgroundColor: '#252b3a',
-    height: 1,
-    marginVertical: 12,
-  },
-  modelStatus: {
-    gap: 4,
-  },
-  statusHeadingRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  statusLabel: {
-    color: '#f4f7fb',
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  statusDetail: {
-    color: '#a8b0c2',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  generationStatus: {
-    color: '#d6a85a',
-    fontSize: 12,
-    fontWeight: '700',
-    marginTop: 2,
-  },
-  statusActions: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 10,
-  },
-  statusActionButton: {
-    alignItems: 'center',
-    backgroundColor: '#8be9d4',
-    borderColor: '#a7f5e4',
-    borderRadius: 8,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 34,
-    paddingHorizontal: 12,
-  },
-  secondaryStatusActionButton: {
-    backgroundColor: '#171b25',
-    borderColor: '#344052',
-  },
-  statusActionText: {
-    color: '#07110f',
-    fontSize: 13,
-    fontWeight: '900',
-  },
-  secondaryStatusActionText: {
-    color: '#d8deea',
-    fontSize: 13,
-    fontWeight: '900',
-  },
   messagesContent: {
-    paddingHorizontal: 18,
+    paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 18,
   },
@@ -1246,23 +1263,54 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   emptyState: {
+    alignItems: 'center',
     alignSelf: 'center',
     maxWidth: 320,
     paddingVertical: 48,
   },
+  emptyAvatar: {
+    alignItems: 'center',
+    backgroundColor: colors.accent.teal,
+    borderRadius: 32,
+    height: 64,
+    justifyContent: 'center',
+    marginBottom: spacing(4),
+    width: 64,
+  },
+  emptyAvatarText: {
+    color: colors.text.onAccent,
+    fontSize: 28,
+    fontWeight: '700',
+  },
   emptyTitle: {
-    color: '#f4f7fb',
-    fontSize: 20,
-    fontWeight: '800',
-    lineHeight: 26,
+    ...typography.heading,
+    color: colors.text.primary,
     textAlign: 'center',
   },
   emptyCopy: {
-    color: '#9aa3b5',
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 8,
+    ...typography.body,
+    color: colors.text.secondary,
+    marginTop: spacing(2),
     textAlign: 'center',
+  },
+  suggestionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing(2),
+    justifyContent: 'center',
+    marginTop: spacing(5),
+  },
+  suggestionChip: {
+    backgroundColor: colors.button.secondary.bg,
+    borderColor: colors.button.secondary.border,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  suggestionChipText: {
+    ...typography.caption,
+    color: colors.accent.teal,
   },
   messageRow: {
     flexDirection: 'row',
@@ -1275,31 +1323,31 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
   },
   messageBubble: {
-    borderRadius: 8,
+    borderRadius: radius.lg,
     maxWidth: '86%',
-    paddingHorizontal: 13,
-    paddingVertical: 11,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
   },
   userBubble: {
-    backgroundColor: '#245c52',
+    backgroundColor: colors.bubble.user.bg,
+    borderBottomRightRadius: 6,
   },
   assistantBubble: {
-    backgroundColor: '#151a24',
-    borderColor: '#262e3f',
-    borderWidth: 1,
+    backgroundColor: colors.bubble.assistant.bg,
+    borderBottomLeftRadius: 6,
   },
   toolBubble: {
-    backgroundColor: '#211b13',
-    borderColor: '#5a4525',
+    backgroundColor: colors.bubble.tool.bg,
+    borderColor: colors.bubble.tool.border,
+    borderWidth: 1,
   },
   systemBubble: {
-    backgroundColor: '#1c1f29',
-    borderColor: '#34394a',
+    backgroundColor: colors.bubble.system.bg,
   },
   messageMetaRow: {
     alignItems: 'center',
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     gap: 12,
     marginBottom: 5,
   },
@@ -1309,55 +1357,38 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     gap: 8,
   },
-  messageRole: {
-    color: '#9ba7bd',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0,
-    textTransform: 'uppercase',
-  },
-  userMessageRole: {
-    color: '#bbefe2',
-  },
   messageRoute: {
-    color: '#d0a968',
+    color: colors.accent.warning,
     flexShrink: 1,
-    fontSize: 11,
-    fontWeight: '700',
+    ...typography.micro,
   },
   speechButton: {
     alignItems: 'center',
-    backgroundColor: '#202838',
-    borderColor: '#344052',
-    borderRadius: 8,
-    borderWidth: 1,
+    backgroundColor: colors.button.ghost.bg,
+    borderRadius: radius.sm,
     justifyContent: 'center',
-    minHeight: 26,
-    minWidth: 48,
-    paddingHorizontal: 8,
+    minHeight: 28,
+    minWidth: 36,
+    paddingHorizontal: 6,
   },
   speechButtonActive: {
-    backgroundColor: '#3a1f28',
-    borderColor: '#8a4659',
+    backgroundColor: colors.button.destructive.bg,
   },
   speechButtonDisabled: {
     opacity: 0.5,
   },
   speechButtonText: {
-    color: '#8be9d4',
-    fontSize: 11,
-    fontWeight: '900',
+    fontSize: 14,
   },
   speechButtonTextActive: {
-    color: '#ffc7d2',
+    fontSize: 14,
   },
   speechButtonTextDisabled: {
-    color: '#8d96aa',
+    opacity: 0.5,
   },
   messageText: {
-    color: '#eef2f8',
-    fontSize: 15,
-    lineHeight: 21,
+    ...typography.body,
+    color: colors.bubble.assistant.text,
   },
   toolCallStrip: {
     gap: 5,
@@ -1365,13 +1396,10 @@ const styles = StyleSheet.create({
   },
   toolCallText: {
     alignSelf: 'flex-start',
-    backgroundColor: '#202838',
-    borderColor: '#344052',
-    borderRadius: 8,
-    borderWidth: 1,
-    color: '#9ff0dd',
-    fontSize: 11,
-    fontWeight: '800',
+    backgroundColor: '#E6F9F5',
+    borderRadius: radius.xs,
+    color: colors.text.onAccentLight,
+    ...typography.micro,
     overflow: 'hidden',
     paddingHorizontal: 8,
     paddingVertical: 5,
@@ -1383,24 +1411,22 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   messageImage: {
-    backgroundColor: '#0a0d13',
-    borderRadius: 8,
+    backgroundColor: colors.bg.secondary,
+    borderRadius: radius.sm,
     height: 124,
     width: 124,
   },
   userMessageText: {
-    color: '#f6fffb',
+    color: colors.bubble.user.text,
   },
   routeDetail: {
-    color: '#7f8aa0',
-    fontSize: 11,
+    color: colors.text.secondary,
+    ...typography.micro,
     marginTop: 7,
   },
   thinkingPanel: {
-    backgroundColor: '#101722',
-    borderColor: '#283345',
-    borderRadius: 8,
-    borderWidth: 1,
+    backgroundColor: colors.bg.secondary,
+    borderRadius: radius.sm,
     marginBottom: 8,
     overflow: 'hidden',
   },
@@ -1409,7 +1435,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 12,
-    minHeight: 34,
+    minHeight: 44,
     paddingHorizontal: 10,
     paddingVertical: 7,
   },
@@ -1417,44 +1443,43 @@ const styles = StyleSheet.create({
     opacity: 0.8,
   },
   thinkingStatus: {
-    color: '#b9c5d8',
+    color: colors.text.secondary,
     flex: 1,
-    fontSize: 12,
-    fontWeight: '800',
+    ...typography.caption,
+    fontWeight: '600',
   },
   thinkingToggleText: {
-    color: '#8be9d4',
+    color: colors.accent.teal,
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '600',
   },
   thinkingText: {
-    borderColor: '#263145',
+    borderColor: colors.divider,
     borderTopWidth: 1,
-    color: '#aab5c8',
-    fontSize: 13,
+    color: colors.text.secondary,
+    ...typography.caption,
     lineHeight: 19,
     paddingHorizontal: 10,
     paddingVertical: 9,
   },
   composerWrap: {
-    borderColor: '#1c2230',
+    borderColor: colors.divider,
     borderTopWidth: 1,
     paddingHorizontal: 12,
     paddingTop: 10,
   },
   errorText: {
-    color: '#ff9f9f',
-    fontSize: 13,
+    color: colors.accent.error,
+    ...typography.caption,
     marginBottom: 8,
     paddingHorizontal: 6,
   },
   stagedTray: {
-    backgroundColor: '#10141d',
-    borderColor: '#283044',
-    borderRadius: 8,
-    borderWidth: 1,
+    backgroundColor: colors.bg.card,
+    borderRadius: radius.md,
     marginBottom: 8,
     padding: 8,
+    ...shadows[1],
   },
   stagedTrayHeader: {
     alignItems: 'center',
@@ -1463,28 +1488,24 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   stagedTrayTitle: {
-    color: '#b9c5d8',
-    fontSize: 12,
-    fontWeight: '800',
+    color: colors.text.secondary,
+    ...typography.caption,
+    fontWeight: '600',
   },
   clearStagedButton: {
-    minHeight: 28,
+    minHeight: 44,
     justifyContent: 'center',
     paddingHorizontal: 8,
   },
   clearStagedText: {
-    color: '#8be9d4',
-    fontSize: 12,
-    fontWeight: '800',
+    fontSize: 16,
   },
   stagedScroller: {
     marginHorizontal: -2,
   },
   stagedAttachment: {
-    backgroundColor: '#161b26',
-    borderColor: '#30384a',
-    borderRadius: 8,
-    borderWidth: 1,
+    backgroundColor: colors.bg.secondary,
+    borderRadius: radius.sm,
     marginHorizontal: 2,
     marginRight: 8,
     minHeight: 76,
@@ -1493,51 +1514,50 @@ const styles = StyleSheet.create({
     width: 108,
   },
   stagedImage: {
-    backgroundColor: '#0a0d13',
+    backgroundColor: colors.bg.grouped,
     height: 50,
     width: '100%',
   },
   stagedFilePreview: {
     alignItems: 'center',
-    backgroundColor: '#202737',
+    backgroundColor: colors.bg.secondary,
     height: 50,
     justifyContent: 'center',
     width: '100%',
   },
   stagedFilePreviewText: {
-    color: '#b9c5d8',
-    fontSize: 12,
-    fontWeight: '900',
+    color: colors.text.secondary,
+    ...typography.caption,
+    fontWeight: '600',
   },
   stagedAttachmentLabel: {
-    color: '#dce3ef',
-    fontSize: 12,
-    fontWeight: '700',
+    color: colors.text.primary,
+    ...typography.caption,
     paddingHorizontal: 8,
     paddingVertical: 6,
   },
   stagedRemoveButton: {
     alignItems: 'center',
-    backgroundColor: '#10141d',
-    borderColor: '#384255',
-    borderRadius: 8,
-    borderWidth: 1,
+    backgroundColor: colors.bg.card,
+    borderRadius: radius.sm,
     height: 24,
     justifyContent: 'center',
     position: 'absolute',
     right: 4,
     top: 4,
     width: 24,
+    ...shadows[1],
   },
   stagedRemoveText: {
-    color: '#f3f6fb',
+    color: colors.text.primary,
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '600',
   },
   composer: {
     gap: 8,
     minHeight: 56,
     padding: 8,
+    ...shadows[2],
   },
   composerActions: {
     alignItems: 'center',
@@ -1553,51 +1573,36 @@ const styles = StyleSheet.create({
   },
   attachmentButton: {
     alignItems: 'center',
-    backgroundColor: '#171d29',
-    borderColor: '#334053',
-    borderRadius: 8,
-    borderWidth: 1,
-    height: 40,
+    backgroundColor: colors.button.ghost.bg,
+    borderRadius: radius.sm,
+    height: 44,
     justifyContent: 'center',
-    minWidth: 56,
+    minWidth: 44,
     paddingHorizontal: 10,
   },
   attachmentButtonText: {
-    color: '#dce3ef',
-    fontSize: 13,
-    fontWeight: '900',
-  },
-  placeholderAttachmentButton: {
-    opacity: 0.45,
-  },
-  placeholderAttachmentButtonText: {
-    color: '#9aa4b6',
-    fontSize: 13,
-    fontWeight: '900',
+    fontSize: 18,
   },
   disabledAttachmentButton: {
-    backgroundColor: '#202737',
-    borderColor: '#344052',
+    backgroundColor: colors.button.disabled.bg,
     opacity: 0.58,
   },
   disabledAttachmentButtonText: {
-    color: '#8d96aa',
+    opacity: 0.5,
   },
   voiceActiveButton: {
-    backgroundColor: '#173a33',
-    borderColor: '#3f947f',
+    backgroundColor: colors.button.selected.bg,
   },
   voiceActiveButtonText: {
-    color: '#bdf7e8',
+    fontSize: 18,
   },
   voiceTray: {
-    backgroundColor: '#111722',
-    borderColor: '#293447',
-    borderRadius: 8,
-    borderWidth: 1,
+    backgroundColor: colors.bg.card,
+    borderRadius: radius.md,
     gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 10,
+    ...shadows[1],
   },
   voiceTrayHeader: {
     alignItems: 'center',
@@ -1606,27 +1611,25 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   voiceTrayLabel: {
-    color: '#dce3ef',
-    fontSize: 13,
-    fontWeight: '900',
+    color: colors.text.primary,
+    ...typography.bodyBold,
   },
   voiceTrayMeta: {
-    color: '#8bcdbf',
-    fontSize: 12,
-    fontWeight: '800',
+    color: colors.accent.teal,
+    ...typography.caption,
+    fontWeight: '600',
   },
   voiceTranscript: {
-    color: '#f4f7fb',
-    fontSize: 15,
-    lineHeight: 20,
+    color: colors.text.primary,
+    ...typography.body,
   },
   voiceError: {
-    color: '#ff9fb0',
-    fontSize: 13,
+    color: colors.accent.error,
+    ...typography.caption,
     lineHeight: 18,
   },
   input: {
-    color: '#f4f7fb',
+    color: colors.text.primary,
     fontSize: 16,
     lineHeight: 21,
     maxHeight: 104,
@@ -1637,43 +1640,32 @@ const styles = StyleSheet.create({
   },
   sendButton: {
     alignItems: 'center',
-    backgroundColor: '#8be9d4',
-    borderRadius: 8,
-    borderColor: '#a7f5e4',
-    borderWidth: 1,
-    height: 40,
+    backgroundColor: colors.accent.teal,
+    borderRadius: 22,
+    height: 44,
     justifyContent: 'center',
-    minWidth: 72,
-    paddingHorizontal: 15,
+    width: 44,
     flexShrink: 0,
   },
   sendButtonText: {
-    color: '#07110f',
-    fontSize: 14,
-    fontWeight: '900',
+    fontSize: 18,
   },
   disabledSendButton: {
-    backgroundColor: '#202737',
-    borderColor: '#344052',
+    backgroundColor: colors.button.disabled.bg,
   },
   disabledSendButtonText: {
-    color: '#8d96aa',
+    opacity: 0.5,
   },
   cancelButton: {
     alignItems: 'center',
-    backgroundColor: '#3a1f27',
-    borderColor: '#8a3e4f',
-    borderRadius: 8,
-    borderWidth: 1,
-    height: 40,
+    backgroundColor: colors.accent.coral,
+    borderRadius: 22,
+    height: 44,
     justifyContent: 'center',
-    minWidth: 58,
-    paddingHorizontal: 13,
+    width: 44,
     flexShrink: 0,
   },
   cancelButtonText: {
-    color: '#ffd8de',
-    fontSize: 14,
-    fontWeight: '900',
+    fontSize: 18,
   },
 })

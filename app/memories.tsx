@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'expo-router'
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
+import { colors, radius, shadows, typography } from '../lib/theme'
 import { memoryService } from '../services/memory'
 import { useStore } from '../store'
 import type { MemoryNoteSummary, ToolLogEntry } from '../store/slices/memory'
@@ -17,6 +18,24 @@ const formatMemoryDate = (value: string): string => {
     month: 'short',
     year: 'numeric',
   })
+}
+
+const formatRelativeDate = (value: string): string => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const now = Date.now()
+  const diffMs = now - date.getTime()
+  const diffSeconds = Math.floor(diffMs / 1000)
+  const diffMinutes = Math.floor(diffSeconds / 60)
+  const diffHours = Math.floor(diffMinutes / 60)
+  const diffDays = Math.floor(diffHours / 24)
+
+  if (diffSeconds < 60) return 'just now'
+  if (diffMinutes < 60) return `${diffMinutes}m ago`
+  if (diffHours < 24) return `${diffHours}h ago`
+  if (diffDays < 7) return `${diffDays}d ago`
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`
+  return `${Math.floor(diffDays / 30)}mo ago`
 }
 
 const formatLogTime = (value: number): string =>
@@ -54,6 +73,25 @@ const recentVisibleMemoryLog = (entries: readonly ToolLogEntry[]): ToolLogEntry[
   }
 
   return unique
+}
+
+function DoneButton({
+  onPress,
+}: {
+  readonly onPress: () => void
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.doneButton,
+        pressed ? styles.pressed : null,
+      ]}
+    >
+      <Text style={styles.doneButtonText}>✓ Done</Text>
+    </Pressable>
+  )
 }
 
 function HeaderButton({
@@ -108,8 +146,13 @@ function MemoryNoteCard({
     <View style={styles.memoryCard}>
       <View style={styles.memoryHeader}>
         <View style={styles.memoryCopy}>
-          <Text style={styles.memoryName} numberOfLines={2}>{note.name}</Text>
-          <Text style={styles.memoryMeta}>{note.type} / {formatMemoryDate(note.modified)}</Text>
+          <View style={styles.memoryNameRow}>
+            <Text style={styles.memoryName} numberOfLines={2}>{note.name}</Text>
+            <View style={styles.typePill}>
+              <Text style={styles.typePillText}>{note.type}</Text>
+            </View>
+          </View>
+          <Text style={styles.memoryMeta}>{formatMemoryDate(note.modified)} · {formatRelativeDate(note.modified)}</Text>
         </View>
         <Pressable
           accessibilityRole="button"
@@ -122,21 +165,28 @@ function MemoryNoteCard({
           ]}
         >
           <Text style={[styles.deleteText, deleting ? styles.disabledText : null]}>
-            {deleting ? 'Deleting' : 'Delete'}
+            {deleting ? '🗑️ Deleting' : '🗑️ Delete'}
           </Text>
         </Pressable>
       </View>
 
       {preview === '' ? null : <Text style={styles.memoryPreview}>{preview}</Text>}
-      {tags.length === 0 ? null : <Text style={styles.memoryTags}>{tags.join(', ')}</Text>}
-      <Text style={styles.memoryPath} numberOfLines={2}>{note.path}</Text>
+      {tags.length === 0 ? null : (
+        <View style={styles.tagsRow}>
+          {tags.map((tag) => (
+            <View key={tag} style={styles.tagPill}>
+              <Text style={styles.tagPillText}>{tag}</Text>
+            </View>
+          ))}
+        </View>
+      )}
 
       <Pressable
         accessibilityRole="button"
         onPress={() => onToggle(note.path)}
         style={({ pressed }) => [styles.detailButton, pressed ? styles.pressed : null]}
       >
-        <Text style={styles.detailButtonText}>{expanded ? 'Hide details' : 'Show details'}</Text>
+        <Text style={styles.detailButtonText}>{expanded ? '▼ Hide' : '▶ Details'}</Text>
       </Pressable>
 
       {expanded ? (
@@ -183,6 +233,7 @@ export default function Memories() {
   const router = useRouter()
   const [expandedPath, setExpandedPath] = useState<string | null>(null)
   const [deletingPath, setDeletingPath] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
   const memoryNotes = useStore((s) => s.memoryNotes)
   const memoryNotesStatus = useStore((s) => s.memoryNotesStatus)
   const memoryNotesError = useStore((s) => s.memoryNotesError)
@@ -190,6 +241,17 @@ export default function Memories() {
   const toolLog = useStore((s) => s.toolLog)
   const recentMemoryLog = useMemo(() => recentVisibleMemoryLog(toolLog), [toolLog])
   const loading = memoryNotesStatus === 'loading'
+
+  const filteredNotes = useMemo(() => {
+    if (searchQuery.trim() === '') return memoryNotes
+    const query = searchQuery.toLowerCase()
+    return memoryNotes.filter((note) =>
+      note.name.toLowerCase().includes(query) ||
+      note.preview?.toLowerCase().includes(query) ||
+      note.description?.toLowerCase().includes(query) ||
+      note.tags.join(' ').toLowerCase().includes(query),
+    )
+  }, [memoryNotes, searchQuery])
 
   useEffect(() => {
     void memoryService.listMemories()
@@ -242,11 +304,11 @@ export default function Memories() {
           <Text style={styles.title}>Memories</Text>
           <Text style={styles.subtitle}>{memoryStatusCopy(memoryNotesStatus, memoryNotes.length)}</Text>
         </View>
-        <HeaderButton label="Done" onPress={handleDone} muted />
+        <DoneButton onPress={handleDone} />
       </View>
 
       <View style={styles.actionRow}>
-        <HeaderButton label={loading ? 'Refreshing' : 'Refresh'} onPress={handleRefresh} muted disabled={loading} />
+        <HeaderButton label={loading ? '🔄 Refreshing' : '🔄 Refresh'} onPress={handleRefresh} muted disabled={loading} />
       </View>
 
       {lastExtractionSummary === null ? null : (
@@ -255,18 +317,29 @@ export default function Memories() {
           <Text style={styles.statusText}>{lastExtractionSummary}</Text>
         </View>
       )}
-      {memoryNotesError === null ? null : <Text style={styles.errorText}>{memoryNotesError}</Text>}
+      {memoryNotesError === null ? null : <Text style={styles.errorText}>⚠️ {memoryNotesError}</Text>}
+
+      {memoryNotes.length > 0 ? (
+        <TextInput
+          style={styles.searchBar}
+          placeholder="Search memories"
+          placeholderTextColor={colors.text.muted}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+      ) : null}
 
       {memoryNotes.length === 0 ? (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>No memories yet</Text>
+          <Text style={styles.emptyEmoji}>🧠</Text>
+          <Text style={styles.emptyTitle}>Jeff hasn't stored any memories yet</Text>
           <Text style={styles.emptyDetail}>
-            Ask Jeff to remember something, or keep conversation memory enabled.
+            As you chat, Jeff will remember the important things about you.
           </Text>
         </View>
       ) : (
         <View style={styles.list}>
-          {memoryNotes.map((note) => (
+          {filteredNotes.map((note) => (
             <MemoryNoteCard
               key={note.path}
               note={note}
@@ -291,11 +364,11 @@ export default function Memories() {
 
 const styles = StyleSheet.create({
   root: {
-    backgroundColor: '#080a0f',
+    backgroundColor: colors.bg.grouped,
     flex: 1,
   },
   content: {
-    paddingHorizontal: 18,
+    paddingHorizontal: 20,
   },
   header: {
     alignItems: 'center',
@@ -308,21 +381,21 @@ const styles = StyleSheet.create({
     paddingRight: 14,
   },
   eyebrow: {
-    color: '#8b93a7',
-    fontSize: 12,
+    color: colors.text.secondary,
+    fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 0,
+    letterSpacing: 0.8,
     textTransform: 'uppercase',
   },
   title: {
-    color: '#f6f7fb',
-    fontSize: 31,
-    fontWeight: '800',
+    color: colors.text.primary,
+    fontSize: 34,
+    fontWeight: '700',
     letterSpacing: 0,
     marginTop: 2,
   },
   subtitle: {
-    color: '#9aa3b5',
+    color: colors.text.secondary,
     fontSize: 13,
     marginTop: 3,
   },
@@ -331,91 +404,108 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 12,
   },
+  doneButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  doneButtonText: {
+    color: colors.accent.teal,
+    fontSize: 17,
+    fontWeight: '600',
+  },
   headerButton: {
     alignItems: 'center',
-    backgroundColor: '#8be9d4',
-    borderRadius: 8,
-    minHeight: 42,
+    backgroundColor: colors.accent.teal,
+    borderRadius: radius.sm,
+    minHeight: 44,
     justifyContent: 'center',
     paddingHorizontal: 14,
   },
   headerButtonText: {
-    color: '#07110f',
+    color: colors.text.onAccent,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '600',
   },
   mutedButton: {
-    backgroundColor: '#171b25',
-    borderColor: '#2d3444',
-    borderWidth: 1,
+    backgroundColor: colors.bg.secondary,
   },
   mutedButtonText: {
-    color: '#f4f7fb',
+    color: colors.text.primary,
   },
   disabledButton: {
     opacity: 0.52,
   },
   disabledText: {
-    color: '#9aa3b5',
+    color: colors.text.secondary,
   },
   statusPanel: {
-    backgroundColor: '#10141d',
-    borderColor: '#252b3a',
-    borderRadius: 8,
-    borderWidth: 1,
+    backgroundColor: colors.bg.card,
+    borderRadius: radius.md,
     marginBottom: 12,
     paddingHorizontal: 13,
     paddingVertical: 11,
+    ...shadows[1],
   },
   statusLabel: {
-    color: '#8b93a7',
+    color: colors.text.secondary,
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '600',
     letterSpacing: 0,
     textTransform: 'uppercase',
   },
   statusText: {
-    color: '#f4f7fb',
+    color: colors.text.primary,
     fontSize: 15,
-    fontWeight: '800',
+    fontWeight: '600',
     lineHeight: 20,
     marginTop: 4,
   },
   errorText: {
-    color: '#ff9b9b',
+    color: colors.accent.error,
     fontSize: 13,
     lineHeight: 18,
     marginBottom: 12,
   },
+  searchBar: {
+    backgroundColor: colors.bg.secondary,
+    borderRadius: radius.sm,
+    color: colors.text.primary,
+    fontSize: 15,
+    marginBottom: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
   emptyState: {
-    backgroundColor: '#10141d',
-    borderColor: '#252b3a',
-    borderRadius: 8,
-    borderWidth: 1,
+    alignItems: 'center',
     paddingHorizontal: 14,
-    paddingVertical: 18,
+    paddingVertical: 32,
+  },
+  emptyEmoji: {
+    fontSize: 48,
+    marginBottom: 12,
   },
   emptyTitle: {
-    color: '#f4f7fb',
-    fontSize: 16,
-    fontWeight: '800',
+    color: colors.text.primary,
+    fontSize: 22,
+    fontWeight: '700',
+    textAlign: 'center',
   },
   emptyDetail: {
-    color: '#9aa3b5',
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 5,
+    color: colors.text.secondary,
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: 6,
+    textAlign: 'center',
   },
   list: {
-    gap: 12,
+    gap: 16,
   },
   memoryCard: {
-    backgroundColor: '#10141d',
-    borderColor: '#252b3a',
-    borderRadius: 8,
-    borderWidth: 1,
+    backgroundColor: colors.bg.card,
+    borderRadius: radius.md,
     paddingHorizontal: 13,
     paddingVertical: 12,
+    ...shadows[1],
   },
   memoryHeader: {
     alignItems: 'flex-start',
@@ -425,72 +515,90 @@ const styles = StyleSheet.create({
   memoryCopy: {
     flex: 1,
   },
+  memoryNameRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
   memoryName: {
-    color: '#f4f7fb',
-    fontSize: 16,
-    fontWeight: '800',
-    lineHeight: 21,
+    color: colors.text.primary,
+    fontSize: 17,
+    fontWeight: '600',
+    lineHeight: 22,
+  },
+  typePill: {
+    backgroundColor: colors.bg.secondary,
+    borderRadius: radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  typePillText: {
+    color: colors.text.secondary,
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 18,
   },
   memoryMeta: {
-    color: '#8b93a7',
+    color: colors.text.secondary,
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '600',
     marginTop: 3,
-    textTransform: 'uppercase',
   },
   deleteButton: {
     alignItems: 'center',
-    backgroundColor: '#2a1720',
-    borderColor: '#693143',
-    borderRadius: 8,
-    borderWidth: 1,
-    minHeight: 36,
+    backgroundColor: colors.button.destructive.bg,
+    borderRadius: radius.sm,
+    minHeight: 44,
     justifyContent: 'center',
     paddingHorizontal: 11,
   },
   deleteText: {
-    color: '#ffb8c7',
+    color: colors.accent.error,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '600',
   },
   memoryPreview: {
-    color: '#d9deea',
+    color: colors.text.primary,
     fontSize: 15,
     lineHeight: 21,
     marginTop: 10,
   },
-  memoryTags: {
-    color: '#8fcbb9',
-    fontSize: 12,
-    fontWeight: '800',
+  tagsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
     marginTop: 9,
-    textTransform: 'uppercase',
   },
-  memoryPath: {
-    color: '#70798d',
+  tagPill: {
+    backgroundColor: 'rgba(18, 184, 158, 0.1)',
+    borderRadius: radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  tagPillText: {
+    color: colors.accent.teal,
     fontSize: 12,
-    lineHeight: 17,
-    marginTop: 8,
+    fontWeight: '600',
+    textTransform: 'uppercase',
   },
   detailButton: {
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: '#171b25',
-    borderColor: '#2d3444',
-    borderRadius: 8,
-    borderWidth: 1,
-    minHeight: 36,
+    backgroundColor: colors.bg.secondary,
+    borderRadius: radius.sm,
+    minHeight: 44,
     justifyContent: 'center',
     marginTop: 11,
     paddingHorizontal: 12,
   },
   detailButtonText: {
-    color: '#f4f7fb',
+    color: colors.text.primary,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '600',
   },
   detailPanel: {
-    borderTopColor: '#252b3a',
+    borderTopColor: colors.divider,
     borderTopWidth: 1,
     gap: 12,
     marginTop: 12,
@@ -500,50 +608,49 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   detailLabel: {
-    color: '#8b93a7',
+    color: colors.text.secondary,
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '600',
     letterSpacing: 0,
     textTransform: 'uppercase',
   },
   detailText: {
-    color: '#d9deea',
+    color: colors.text.primary,
     fontSize: 14,
     lineHeight: 20,
   },
   toolLogPanel: {
-    borderTopColor: '#1c2230',
+    borderTopColor: colors.divider,
     borderTopWidth: 1,
     gap: 8,
     marginTop: 20,
     paddingTop: 16,
   },
   toolLogTitle: {
-    color: '#f4f7fb',
-    fontSize: 16,
-    fontWeight: '800',
+    color: colors.text.primary,
+    fontSize: 17,
+    fontWeight: '600',
   },
   toolLogRow: {
-    backgroundColor: '#10141d',
-    borderColor: '#252b3a',
-    borderRadius: 8,
-    borderWidth: 1,
+    backgroundColor: colors.bg.card,
+    borderRadius: radius.md,
     flexDirection: 'row',
     gap: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
+    ...shadows[1],
   },
   toolLogCopy: {
     flex: 1,
   },
   toolLogName: {
-    color: '#f4f7fb',
+    color: colors.text.primary,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '600',
     textTransform: 'capitalize',
   },
   toolLogDetail: {
-    color: '#9aa3b5',
+    color: colors.text.secondary,
     fontSize: 12,
     lineHeight: 17,
     marginTop: 3,
@@ -552,13 +659,13 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   toolLogStatus: {
-    color: '#8fcbb9',
+    color: colors.accent.teal,
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '600',
     textTransform: 'uppercase',
   },
   toolLogTime: {
-    color: '#70798d',
+    color: colors.text.secondary,
     fontSize: 12,
     marginTop: 3,
   },
