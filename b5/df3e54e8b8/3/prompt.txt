@@ -1,0 +1,1 @@
+In /Users/alexjay/code/jeffs-brain/phone, inspect the store/UI around model download status and inference loading. Identify what the user sees when a large model download fails or the app crashes, and recommend minimal changes for robust restart/retry UX. Do not edit files.
