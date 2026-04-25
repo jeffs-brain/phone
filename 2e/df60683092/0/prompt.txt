@@ -1,0 +1,25 @@
+it crashed when trying multimodal
+
+---
+
+yeah but why is it crashing, is this something we can fix?
+
+---
+
+if nto then we should use CPU and proceed with the rest of the plan, we have a long way to go
+
+---
+
+got another crash there... i already gave you the gradium stuff. it is in the .env
+
+---
+
+did crash this time. nice. ok so whatabout memory, the brain! I weanna be able to use the memory tools and see the memories, manage them, ie delete them. whats up next on the plan, or where does memory stuff sit? we can use multiple subagents and work in parallel if possible
+
+---
+
+ok how do i get to the memories view?
+
+---
+
+[Image #1] there is no Manage Memories button or link or whatever, should be able to access it from the main chat view too no? also not every conversation and shit needs storing, do we have a notion of new threads. the llm should make the decision to remember important things, things that the user asks to remember. likewise for recall.
