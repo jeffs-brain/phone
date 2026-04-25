@@ -1,0 +1,66 @@
+this is all working, i hear the response play back, i suppose it would be cool to make that optional by way of a button on the messages so we could just play any of them at the click of a button not necessarily all of them
+
+---
+
+then lets lookat the memroy tools and ensure that both remembering and recalling are correctly working because it doesnt appear to be so:
+
+no call was made to the recall tool here?
+
+[Image #1]
+
+---
+
+when the app loads i think we should auto load the last model used or if none was then the e2b, would make it that little bit quicker
+
+---
+
+i dont want to hack the queries together or be regexing or whartever you mean by that, i mean, that the llm should be prompted in the system prompt to use the tools properly.
+
+---
+
+i shouldnt have to always say remember this or recall this, these things should be known and assessed by the llm
+
+---
+
+const isRecord = (value: unknown): value is JsonRecord =>
+        ⋮
+    270        name: 'memory_recall',
+    279 -      description: 'Search Alex Jay\'s private on-device memories for relevant facts.',
+    271 +      description: 'Search Alex Jay\'s private on-device memories. Call before answering questions about Alex, his family, preferences, personal facts, projects, plans, or
+          past instructions.',
+    272        parameters: {
+        ⋮
+    274          properties: {
+    283 -          query: { type: 'string', description: 'The memory search query.' },
+    275 +          query: { type: 'string', description: 'A concise natural-language search query using the user\'s wording.' },
+    276            topK: { type: 'integer', minimum: 1, maximum: MAX_TOOL_RECALL_HITS },
+        ⋮
+    300        name: 'memory_remember',
+    309 -      description: 'Store a durable private memory for explicit remember requests or clearly lasting user facts, preferences, plans, or feedback. Do not store greetings, s
+         mall talk, or one-off context.',
+    301 +      description: 'Store a durable private memory when the user provides a stable personal fact, preference, relationship, plan, project detail, or explicit feedback that
+          will help in future chats. Do not store greetings, small talk, or one-off context.',
+    302        parameters: {
+        ⋮
+    445        return []
+    454 -    }
+    455 -  },
+    456 -
+    457 -  async rememberExplicitInstruction(text: string): Promise<boolean> {
+    458 -    const memory = explicitMemoryText(text)
+    459 -    if (memory === null) return false
+    460 -
+
+what is this shit, we said no to this deterministic bullshit, none of this should be geared towards "Alex" this should be for anyone to use... stop cheating
+
+---
+
+[Image #1] well we are getting memory remember failed when trying to store a memory.
+
+---
+
+[Image #1] the funny thing is that either through extraction of the conversation or some other means, the memories do have it stored. so not sure if it is just the explicit tool calling from the agent or something else
+
+---
+
+if you need to research this, use web search, get it fucking rihgt, use subagents, whatever you need to do
