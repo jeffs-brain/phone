@@ -4,6 +4,7 @@ import type { ModelId } from '../store/slices/inference'
 
 const RUNTIME_MARKER_KEY = 'jeff-phone:runtime-marker'
 const SIMULATOR_MULTIMODAL_GPU_AUTO_DISABLED_KEY = 'jeff-phone:simulator-multimodal-gpu-auto-disabled'
+const MULTIMODAL_GPU_AUTO_DISABLED_KEY = 'jeff-phone:multimodal-gpu-auto-disabled'
 
 export type RuntimeMarkerStage = 'model-load' | 'projector-load' | 'generation'
 
@@ -29,12 +30,22 @@ export const clearRuntimeMarker = async (): Promise<void> => {
   await AsyncStorage.removeItem(RUNTIME_MARKER_KEY)
 }
 
-export const disableSimulatorMultimodalGpu = async (): Promise<void> => {
-  await AsyncStorage.setItem(SIMULATOR_MULTIMODAL_GPU_AUTO_DISABLED_KEY, 'true')
+export const disableMultimodalGpu = async (): Promise<void> => {
+  await AsyncStorage.setItem(MULTIMODAL_GPU_AUTO_DISABLED_KEY, 'true')
 }
 
-export const isSimulatorMultimodalGpuAutoDisabled = async (): Promise<boolean> =>
+export const isMultimodalGpuAutoDisabled = async (): Promise<boolean> =>
+  (await AsyncStorage.getItem(MULTIMODAL_GPU_AUTO_DISABLED_KEY)) === 'true' ||
   (await AsyncStorage.getItem(SIMULATOR_MULTIMODAL_GPU_AUTO_DISABLED_KEY)) === 'true'
+
+export const clearMultimodalGpuAutoDisable = async (): Promise<void> => {
+  await AsyncStorage.removeItem(MULTIMODAL_GPU_AUTO_DISABLED_KEY)
+  await AsyncStorage.removeItem(SIMULATOR_MULTIMODAL_GPU_AUTO_DISABLED_KEY)
+}
+
+export const disableSimulatorMultimodalGpu = disableMultimodalGpu
+export const isSimulatorMultimodalGpuAutoDisabled = isMultimodalGpuAutoDisabled
+export const clearSimulatorMultimodalGpuAutoDisable = clearMultimodalGpuAutoDisable
 
 export const readRuntimeMarker = async (): Promise<RuntimeMarker | null> => {
   const raw = await AsyncStorage.getItem(RUNTIME_MARKER_KEY)
@@ -57,7 +68,7 @@ export const readRuntimeMarker = async (): Promise<RuntimeMarker | null> => {
 
 export const describeRuntimeMarker = (marker: RuntimeMarker): string => {
   if (marker.stage === 'projector-load') {
-    return 'The app previously stopped while loading the multimodal projector. Simulator projector GPU has been disabled for this install.'
+    return 'The app previously stopped while loading the multimodal projector. Projector GPU has been disabled for this install.'
   }
   if (marker.stage === 'generation') {
     return 'The app previously stopped during local generation. Retry with a shorter prompt or the smaller model.'

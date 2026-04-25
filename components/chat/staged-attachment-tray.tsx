@@ -31,19 +31,24 @@ function StagedAttachmentPreview({
         />
       ) : (
         <View style={styles.stagedFilePreview}>
-          <Text style={styles.stagedFilePreviewText}>File</Text>
+          <Text style={styles.stagedFileIcon}>{'\u{1F4C4}'}</Text>
+          <Text numberOfLines={1} style={styles.stagedFileName}>{label}</Text>
         </View>
       )}
-      <Text numberOfLines={1} style={styles.stagedAttachmentLabel}>{label}</Text>
       <Pressable
         accessibilityLabel={`Remove ${label}`}
         accessibilityRole="button"
-        hitSlop={8}
-        onPress={() => onRemove(index)}
+        hitSlop={10}
+        onPress={() => { hapticButton(); onRemove(index) }}
         style={({ pressed }) => [styles.stagedRemoveButton, pressed ? styles.pressed : null]}
       >
-        <Text style={styles.stagedRemoveText}>X</Text>
+        <Text style={styles.stagedRemoveText}>{'×'}</Text>
       </Pressable>
+      {part.type === 'image' ? (
+        <View style={styles.stagedImageLabelRow}>
+          <Text numberOfLines={1} style={styles.stagedAttachmentLabel}>{label}</Text>
+        </View>
+      ) : null}
     </View>
   )
 }
@@ -63,23 +68,12 @@ export function StagedAttachmentTray({
 
   return (
     <View style={styles.stagedTray}>
-      <View style={styles.stagedTrayHeader}>
-        <Text style={styles.stagedTrayTitle}>
-          {attachments.length === 1 ? '1 attachment' : `${attachments.length} attachments`}
-        </Text>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => { hapticButton(); onClear() }}
-          style={({ pressed }) => [styles.clearStagedButton, pressed ? styles.pressed : null]}
-        >
-          <Text style={styles.clearStagedText}>{'\u{1F5D1}\uFE0F'}</Text>
-        </Pressable>
-      </View>
       <ScrollView
+        accessibilityLabel="Staged attachments"
         horizontal
         keyboardShouldPersistTaps="handled"
         showsHorizontalScrollIndicator={false}
-        style={styles.stagedScroller}
+        contentContainerStyle={styles.stagedScrollerContent}
       >
         {attachments.map((part, index) => (
           <StagedAttachmentPreview
@@ -90,6 +84,16 @@ export function StagedAttachmentTray({
           />
         ))}
       </ScrollView>
+      {attachments.length > 1 ? (
+        <Pressable
+          accessibilityLabel="Clear all attachments"
+          accessibilityRole="button"
+          onPress={() => { hapticButton(); onClear() }}
+          style={({ pressed }) => [styles.clearAllButton, pressed ? styles.pressed : null]}
+        >
+          <Text style={styles.clearAllText}>Clear all</Text>
+        </Pressable>
+      ) : null}
     </View>
   )
 }

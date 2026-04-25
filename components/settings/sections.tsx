@@ -1,5 +1,6 @@
 import { Text, View } from 'react-native'
 
+import type { RuntimeDiagnostics } from '../../services/inference'
 import type { MemoryNotesStatus } from '../../store/slices/memory'
 import type { ModelId, ModelStatus } from '../../store/slices/inference'
 import type { ProviderMode } from '../../store/slices/settings'
@@ -13,7 +14,8 @@ import {
   modelLabel,
   PROVIDER_OPTIONS,
   runtimeProfileLabel,
-  simulatorMultimodalDetail,
+  textGpuDiagnostic,
+  visionGpuDiagnostic,
 } from '../../lib/settings/copy'
 import {
   ActionButton,
@@ -80,21 +82,56 @@ export function DeveloperSettingsSection({
   modelStatus,
   modelError,
   generationStatus,
+  runtimeDiagnostics,
+  projectorGpuAutoDisabled,
+  projectorGpuGuardBusy,
+  projectorGpuGuardError,
+  onClearProjectorGpuAutoDisable,
 }: {
   readonly modelSize: ModelId
   readonly modelStatus: ModelStatus
   readonly modelError: string | null
   readonly generationStatus: GenerationStatus
+  readonly runtimeDiagnostics: RuntimeDiagnostics
+  readonly projectorGpuAutoDisabled: boolean | null
+  readonly projectorGpuGuardBusy: boolean
+  readonly projectorGpuGuardError: string | null
+  readonly onClearProjectorGpuAutoDisable: () => void
 }) {
   const modelStatusDetail = modelError === null ? undefined : friendlyModelError(modelError)
+  const textGpu = textGpuDiagnostic(runtimeDiagnostics)
+  const visionGpu = visionGpuDiagnostic(runtimeDiagnostics, projectorGpuAutoDisabled)
+  const canClearProjectorGuard = projectorGpuAutoDisabled === true
 
   return (
     <SettingsSection title="🔍 Developer">
-      <DiagnosticRow label="Runtime profile" value={runtimeProfileLabel()} />
+      <DiagnosticRow label="Runtime profile" value={runtimeProfileLabel(runtimeDiagnostics)} />
       <DiagnosticRow label="Selected model" value={modelLabel(modelSize)} detail={modelSize} />
+      <DiagnosticRow
+        label="Loaded model"
+        value={runtimeDiagnostics.modelId === null ? 'None' : modelLabel(runtimeDiagnostics.modelId)}
+        detail={runtimeDiagnostics.modelId ?? undefined}
+      />
       <DiagnosticRow label="Model status" value={formatStatusValue(modelStatus)} detail={modelStatusDetail} />
       <DiagnosticRow label="Generation status" value={formatStatusValue(generationStatus)} />
-      <Text style={styles.diagnosticNote}>{simulatorMultimodalDetail()}</Text>
+      <DiagnosticRow label="Text GPU" value={textGpu.value} detail={textGpu.detail} />
+      <DiagnosticRow
+        label="GPU layers requested"
+        value={runtimeDiagnostics.requestedGpuLayers.toString()}
+        detail="Passed to llama.rn as n_gpu_layers during model initialisation."
+      />
+      <DiagnosticRow label="Vision GPU" value={visionGpu.value} detail={visionGpu.detail} />
+      {__DEV__ && canClearProjectorGuard ? (
+        <ActionButton
+          label={projectorGpuGuardBusy ? 'Clearing...' : '🧹 Clear GPU guard'}
+          onPress={onClearProjectorGpuAutoDisable}
+          muted
+          disabled={projectorGpuGuardBusy}
+        />
+      ) : null}
+      {projectorGpuGuardError === null ? null : (
+        <Text style={styles.errorText}>⚠️ {projectorGpuGuardError}</Text>
+      )}
     </SettingsSection>
   )
 }
@@ -171,19 +208,23 @@ export function ProviderSettingsSection({
 
 export function ConversationSettingsSection({
   voiceEnabled,
+  thinkingEnabled,
   rememberConversation,
   devMode,
   generationBusy,
   onVoiceEnabledChange,
+  onThinkingEnabledChange,
   onRememberConversationChange,
   onDevModeChange,
   onStartNewThread,
 }: {
   readonly voiceEnabled: boolean
+  readonly thinkingEnabled: boolean
   readonly rememberConversation: boolean
   readonly devMode: boolean
   readonly generationBusy: boolean
   readonly onVoiceEnabledChange: (enabled: boolean) => void
+  readonly onThinkingEnabledChange: (enabled: boolean) => void
   readonly onRememberConversationChange: (enabled: boolean) => void
   readonly onDevModeChange: (enabled: boolean) => void
   readonly onStartNewThread: () => void
@@ -195,6 +236,12 @@ export function ConversationSettingsSection({
         detail="Mic uses Gradium STT; assistant replies can be played from each message"
         value={voiceEnabled}
         onValueChange={onVoiceEnabledChange}
+      />
+      <ToggleRow
+        label="Thinking"
+        detail="Allows Gemma to spend extra reasoning tokens before answering. Leave off for faster demo replies."
+        value={thinkingEnabled}
+        onValueChange={onThinkingEnabledChange}
       />
       <ToggleRow
         label="Remember conversations"

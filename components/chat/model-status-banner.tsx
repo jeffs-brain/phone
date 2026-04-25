@@ -5,7 +5,13 @@ import { colors } from '../../lib/theme'
 import type { ModelStatus } from '../../store/slices/inference'
 import { styles } from './styles'
 
+type DownloadBytes = {
+  readonly received: number
+  readonly total: number
+}
+
 export type ModelStatusBannerProps = {
+  readonly downloadBytes: DownloadBytes | null
   readonly modelStatus: ModelStatus
   readonly onRetryModel: () => void
   readonly onUseSmallerModel: () => void
@@ -14,17 +20,23 @@ export type ModelStatusBannerProps = {
 }
 
 export function ModelStatusBanner({
+  downloadBytes,
   modelStatus,
   onRetryModel,
   onUseSmallerModel,
   statusDotColour,
   statusPillLabel,
 }: ModelStatusBannerProps) {
+  const progressLabel = downloadBytes === null || downloadBytes.total <= 0
+    ? null
+    : `${Math.round((downloadBytes.received / downloadBytes.total) * 100)}%`
+
   return (
     <>
       <View style={styles.statusPill}>
         <View style={[styles.statusDot, { backgroundColor: statusDotColour }]} />
         <Text style={styles.statusPillLabel} numberOfLines={1}>{statusPillLabel}</Text>
+        {progressLabel === null ? null : <Text style={styles.statusProgressLabel}>{progressLabel}</Text>}
         {isModelActivityStatus(modelStatus) ? (
           <ActivityIndicator color={colors.accent.teal} size="small" />
         ) : null}

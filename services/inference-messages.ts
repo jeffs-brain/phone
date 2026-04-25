@@ -4,19 +4,44 @@ import type { RNLlamaMessagePart, RNLlamaOAICompatibleMessage } from 'llama.rn'
 import { SYSTEM_PROMPT } from '../lib/constants'
 import type { ContentPart, Message } from '../store/types'
 
-export const textFromParts = (parts: readonly ContentPart[]): string =>
+const MEDIA_MARKER = '<__media__>'
+
+export type MediaPrompt = {
+  readonly prompt: string
+  readonly mediaPaths: readonly string[]
+}
+
+const visibleTextFromParts = (parts: readonly ContentPart[]): string =>
   parts
     .filter((part): part is Extract<ContentPart, { type: 'text' }> => part.type === 'text')
     .map((part) => part.text)
     .join('\n')
 
+const fileContextFromPart = (part: Extract<ContentPart, { type: 'file' }>): string => {
+  const metadata = [
+    `Attached file: ${part.name}`,
+    part.mimeType === undefined ? null : `MIME type: ${part.mimeType}`,
+    part.size === undefined ? null : `Size: ${part.size} bytes`,
+  ].filter((line): line is string => line !== null)
+
+  return `${metadata.join('\n')}\n\n${part.text}`
+}
+
+export const textFromParts = (parts: readonly ContentPart[]): string =>
+  parts
+    .filter((part): part is Extract<ContentPart, { type: 'text' | 'file' }> =>
+      part.type === 'text' || part.type === 'file',
+    )
+    .map((part) => part.type === 'text' ? part.text : fileContextFromPart(part))
+    .join('\n\n')
+
 const mediaPlaceholder = (parts: readonly ContentPart[]): string | null => {
   const hasImage = parts.some((part) => part.type === 'image')
   const hasAudio = parts.some((part) => part.type === 'audio')
   if (!hasImage && !hasAudio) return null
-  if (hasImage && hasAudio) return '[Image and audio attachments omitted on this simulator profile.]'
-  if (hasImage) return '[Image attachment omitted on this simulator profile.]'
-  return '[Audio attachment omitted on this simulator profile.]'
+  if (hasImage && hasAudio) return '[Previous image and audio attachments omitted from this turn.]'
+  if (hasImage) return '[Previous image attachment omitted from this turn.]'
+  return '[Previous audio attachment omitted from this turn.]'
 }
 
 const cloudMediaPlaceholder = (parts: readonly ContentPart[]): string | null => {
@@ -73,6 +98,9 @@ const isMediaPart = (part: ContentPart): part is Extract<ContentPart, { type: 'i
 
 export const messageRequiresMultimodal = (message: Message): boolean => message.parts.some(isMediaPart)
 
+const nativeMediaPath = (part: Extract<ContentPart, { type: 'image' | 'audio' }>): string =>
+  part.uri.startsWith('file://') ? part.uri.slice(7) : part.uri
+
 export const latestUserRequiresMultimodal = (messages: readonly Message[]): boolean => {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
@@ -93,9 +121,33 @@ const latestUserMediaMessageId = (messages: readonly Message[]): string | null =
 export const latestUserText = (messages: readonly Message[]): string => {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
-    if (message?.role === 'user') return textFromParts(message.parts)
+    if (message?.role === 'user') return visibleTextFromParts(message.parts)
   }
   return ''
+}
+
+export const latestUserMediaPrompt = (messages: readonly Message[]): MediaPrompt | null => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message?.role !== 'user') continue
+
+    const mediaParts = message.parts.filter(isMediaPart)
+    if (mediaParts.length === 0) return null
+
+    const text = textFromParts(message.parts).trim() || 'Describe the attached media.'
+    return {
+      prompt: [
+        SYSTEM_PROMPT,
+        'Current user message:',
+        text,
+        mediaParts.map(() => MEDIA_MARKER).join('\n'),
+        'Answer the current user message using the attached media.',
+      ].join('\n\n'),
+      mediaPaths: mediaParts.map(nativeMediaPath),
+    }
+  }
+
+  return null
 }
 
 export const buildLlamaMessages = (

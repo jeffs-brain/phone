@@ -38,8 +38,9 @@ const getVoiceButtonText = (voiceStatus: VoiceStatus): string => {
 }
 
 const getVoiceAccessibilityLabel = (voiceStatus: VoiceStatus): string => {
-  if (voiceStatus === 'listening') return 'End recording'
+  if (voiceStatus === 'listening') return 'Stop recording'
   if (voiceStatus === 'speaking') return 'Stop speaking'
+  if (voiceStatus === 'connecting' || voiceStatus === 'requesting-permission') return 'Cancel voice'
   return 'Start voice'
 }
 
@@ -82,6 +83,8 @@ export function ChatComposer({
       />
       <GlassSurface effect="regular" style={styles.composer} tintColor="rgba(243, 239, 236, 0.74)">
         <TextInput
+          accessibilityLabel="Message Jeff"
+          accessibilityHint="Type a message to send to Jeff."
           multiline
           value={draft}
           onChangeText={onChangeDraft}
@@ -97,6 +100,7 @@ export function ChatComposer({
           <View style={styles.attachmentActions}>
             <Pressable
               accessibilityLabel="Attach photo"
+              accessibilityHint="Choose a photo to send with your message."
               accessibilityRole="button"
               onPress={onPickImage}
               style={({ pressed }) => [styles.attachmentButton, pressed ? styles.pressed : null]}
@@ -105,6 +109,7 @@ export function ChatComposer({
             </Pressable>
             <Pressable
               accessibilityLabel="Attach file"
+              accessibilityHint="Choose a file to send with your message."
               accessibilityRole="button"
               onPress={onPickFile}
               style={({ pressed }) => [styles.attachmentButton, pressed ? styles.pressed : null]}
@@ -113,6 +118,7 @@ export function ChatComposer({
             </Pressable>
             <Pressable
               accessibilityLabel={getVoiceAccessibilityLabel(voiceStatus)}
+              accessibilityHint="Use voice input for your message."
               accessibilityRole="button"
               accessibilityState={{ disabled: !voiceCanPress, selected: voiceBusy }}
               disabled={!voiceCanPress}
@@ -135,6 +141,7 @@ export function ChatComposer({
           </View>
           {generationActive ? (
             <Pressable
+              accessibilityLabel="Stop response"
               accessibilityRole="button"
               onPress={onCancel}
               style={({ pressed }) => [styles.cancelButton, pressed ? styles.pressed : null]}
@@ -143,6 +150,7 @@ export function ChatComposer({
             </Pressable>
           ) : (
             <Pressable
+              accessibilityLabel="Send message"
               accessibilityRole="button"
               accessibilityState={{ disabled: !canSend }}
               disabled={!canSend}

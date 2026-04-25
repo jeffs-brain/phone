@@ -1,11 +1,16 @@
 import type * as DocumentPicker from 'expo-document-picker'
 import * as FileSystem from 'expo-file-system/legacy'
 import type * as ImagePicker from 'expo-image-picker'
+import * as ImageManipulator from 'expo-image-manipulator'
 
 import type { ContentPart } from '../../store/types'
 
 export type ImageContentPart = Extract<ContentPart, { type: 'image' }>
+export type FileContentPart = Extract<ContentPart, { type: 'file' }>
 
+const IMAGE_FILE_MAX_BYTES = 10 * 1024 * 1024
+const VISION_IMAGE_MAX_SIDE = 1024
+const VISION_IMAGE_QUALITY = 0.82
 const TEXT_FILE_MAX_BYTES = 256 * 1024
 const TEXT_FILE_EXTENSIONS = [
   '.txt',
@@ -76,10 +81,54 @@ export const assertReadableLlamaImage = async (part: ImageContentPart): Promise<
   if ('size' in info && typeof info.size === 'number' && info.size <= 0) {
     throw new Error('Selected image is empty.')
   }
+  if ('size' in info && typeof info.size === 'number' && info.size > IMAGE_FILE_MAX_BYTES) {
+    throw new Error(`Selected image is larger than ${Math.round(IMAGE_FILE_MAX_BYTES / 1024 / 1024)} MB.`)
+  }
   if (!isSupportedLlamaImage(part)) {
     throw new Error('Choose a JPEG, PNG, BMP, or GIF image.')
   }
   return part
+}
+
+const normalisedImageName = (name: string | undefined): string => {
+  if (name === undefined || name.trim() === '') return 'jeff-vision-image.jpg'
+  return name.replace(/\.[^.]+$/, '') + '.jpg'
+}
+
+const resizeAction = (part: ImageContentPart): ImageManipulator.Action[] => {
+  const width = part.width ?? 0
+  const height = part.height ?? 0
+  const longestSide = Math.max(width, height)
+  if (longestSide <= VISION_IMAGE_MAX_SIDE || longestSide <= 0) return []
+
+  const scale = VISION_IMAGE_MAX_SIDE / longestSide
+  return [{
+    resize: {
+      width: Math.round(width * scale),
+      height: Math.round(height * scale),
+    },
+  }]
+}
+
+export const normaliseImageForLlama = async (part: ImageContentPart): Promise<ImageContentPart> => {
+  const readablePart = await assertReadableLlamaImage(part)
+  const result = await ImageManipulator.manipulateAsync(
+    readablePart.uri,
+    resizeAction(readablePart),
+    {
+      compress: VISION_IMAGE_QUALITY,
+      format: ImageManipulator.SaveFormat.JPEG,
+    },
+  )
+
+  return assertReadableLlamaImage({
+    type: 'image',
+    uri: result.uri,
+    name: normalisedImageName(readablePart.name),
+    mimeType: 'image/jpeg',
+    width: result.width,
+    height: result.height,
+  })
 }
 
 const isTextDocument = (asset: DocumentPicker.DocumentPickerAsset): boolean => {
@@ -99,7 +148,7 @@ const isTextDocument = (asset: DocumentPicker.DocumentPickerAsset): boolean => {
   return TEXT_FILE_EXTENSIONS.some((extension) => lowerName.endsWith(extension))
 }
 
-export const textPartFromDocument = async (asset: DocumentPicker.DocumentPickerAsset): Promise<ContentPart> => {
+export const filePartFromDocument = async (asset: DocumentPicker.DocumentPickerAsset): Promise<FileContentPart> => {
   if (!isTextDocument(asset)) {
     throw new Error(`${asset.name} is not a text file Jeff can read yet.`)
   }
@@ -122,13 +171,12 @@ export const textPartFromDocument = async (asset: DocumentPicker.DocumentPickerA
   const trimmed = text.trim()
   if (trimmed === '') throw new Error(`${asset.name} is empty.`)
 
-  const header = [
-    `Attached file: ${asset.name}`,
-    asset.mimeType === undefined ? null : `MIME type: ${asset.mimeType}`,
-  ].filter((line): line is string => line !== null)
-
   return {
-    type: 'text',
-    text: `${header.join('\n')}\n\n${trimmed}`,
+    type: 'file',
+    name: asset.name,
+    text: trimmed,
+    uri: asset.uri,
+    ...(asset.mimeType === undefined ? {} : { mimeType: asset.mimeType }),
+    ...(asset.size === undefined ? {} : { size: asset.size }),
   }
 }

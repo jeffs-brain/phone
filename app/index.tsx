@@ -11,11 +11,11 @@ import { ChatMessageList } from '../components/chat/chat-message-list'
 import { ModelStatusBanner } from '../components/chat/model-status-banner'
 import { styles } from '../components/chat/styles'
 import {
-  assertReadableLlamaImage,
+  filePartFromDocument,
   imagePartFromDocumentAsset,
   imagePartFromLibraryAsset,
   isSupportedLlamaImage,
-  textPartFromDocument,
+  normaliseImageForLlama,
 } from '../lib/chat/attachment-helpers'
 import {
   GENERATION_STATUS_LABELS,
@@ -45,6 +45,7 @@ export default function Chat() {
   const clearStaged = useStore((s) => s.clearStaged)
   const generationStatus = useStore((s) => s.generationStatus)
   const modelStatus = useStore((s) => s.modelStatus)
+  const downloadBytes = useStore((s) => s.downloadBytes)
   const cancelGeneration = useStore((s) => s.cancelGeneration)
   const modelSize = useStore((s) => s.modelSize)
   const setModelSize = useStore((s) => s.setModelSize)
@@ -112,6 +113,11 @@ export default function Chat() {
     hapticAttachment()
 
     void (async () => {
+      if (stagedAttachments.some((part) => part.type === 'image')) {
+        setActionError('Use one image per message for the local vision model.')
+        return
+      }
+
       const result = await ImagePicker.launchImageLibraryAsync({
         allowsMultipleSelection: false,
         mediaTypes: ['images'],
@@ -138,13 +144,13 @@ export default function Chat() {
       }
 
       const imageParts = await Promise.all(
-        imageAssets.map((asset) => assertReadableLlamaImage(imagePartFromLibraryAsset(asset))),
+        imageAssets.slice(0, 1).map((asset) => normaliseImageForLlama(imagePartFromLibraryAsset(asset))),
       )
       imageParts.forEach(stageAttachment)
     })().catch(() => {
       setActionError('Could not attach that image.')
     })
-  }, [stageAttachment])
+  }, [stageAttachment, stagedAttachments])
 
   const handlePickFile = useCallback(() => {
     setActionError(null)
@@ -167,15 +173,21 @@ export default function Chat() {
       if (result.canceled) return
 
       const failures: string[] = []
+      let hasImageAttachment = stagedAttachments.some((part) => part.type === 'image')
       for (const asset of result.assets) {
         try {
           const imagePart = imagePartFromDocumentAsset(asset)
           if (asset.mimeType?.startsWith('image/') === true || isSupportedLlamaImage(imagePart)) {
-            stageAttachment(await assertReadableLlamaImage(imagePart))
+            if (hasImageAttachment) {
+              failures.push('Use one image per message for the local vision model.')
+              continue
+            }
+            stageAttachment(await normaliseImageForLlama(imagePart))
+            hasImageAttachment = true
             continue
           }
 
-          stageAttachment(await textPartFromDocument(asset))
+          stageAttachment(await filePartFromDocument(asset))
         } catch (error) {
           failures.push(error instanceof Error ? error.message : String(error))
         }
@@ -187,7 +199,7 @@ export default function Chat() {
     })().catch(() => {
       setActionError('Could not attach that file.')
     })
-  }, [stageAttachment])
+  }, [stageAttachment, stagedAttachments])
 
   const handleRemoveStagedAttachment = useCallback((index: number) => {
     setActionError(null)
@@ -279,6 +291,7 @@ export default function Chat() {
       />
 
       <ModelStatusBanner
+        downloadBytes={downloadBytes}
         modelStatus={modelStatus}
         onRetryModel={handleRetryModel}
         onUseSmallerModel={handleUseSmallerModel}

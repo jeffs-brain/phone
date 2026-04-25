@@ -5,6 +5,10 @@ import type { ContentPart, GenerationStatus, Message, RouteDecision, Slice, Tool
 const ACTIVE_GENERATION_STATUSES: readonly GenerationStatus[] = [
   'routing',
   'preparing-vision',
+  'checking-vision',
+  'downloading-vision',
+  'verifying-vision',
+  'initialising-vision',
   'loading-first-token',
   'thinking',
   'using-tools',
@@ -37,6 +41,7 @@ export type ChatSlice = {
   markThinkingDone: (id: string) => void
   commitStreamingMessage: (id: string, final?: CommitStreamingMessageInput) => void
   appendToolCall: (id: string, toolCall: ToolCall) => void
+  removeToolCall: (id: string, toolCallId: string) => void
   setAssistantRouteDecision: (id: string, routeDecision: RouteDecision) => void
   startNewThread: () => void
   clearMessages: () => void
@@ -86,9 +91,11 @@ export const createChatSlice: Slice<ChatSlice> = (set, get) => ({
       stagedAttachments: [],
     }), false, 'chat/sendUserMessage')
 
-    const routingText = text === '' && attachments.length > 0
-      ? 'Message with media attachment'
-      : text
+    const routingText = text !== ''
+      ? text
+      : attachments.some((part) => part.type === 'image' || part.type === 'audio')
+        ? 'Message with media attachment'
+        : 'Message with file attachment'
     const history = state.messages
       .slice(-6)
       .map((message) => message.parts
@@ -234,6 +241,15 @@ export const createChatSlice: Slice<ChatSlice> = (set, get) => ({
         }),
       }
     }, false, 'chat/appendToolCall'),
+
+  removeToolCall: (id, toolCallId) =>
+    set((s) => ({
+      messages: s.messages.map((message) =>
+        message.id === id
+          ? { ...message, toolCalls: message.toolCalls?.filter((toolCall) => toolCall.id !== toolCallId) }
+          : message,
+      ),
+    }), false, 'chat/removeToolCall'),
 
   setAssistantRouteDecision: (id, routeDecision) =>
     set((s) => ({

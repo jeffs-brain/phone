@@ -23,18 +23,20 @@ import { cloudProviderService } from './cloud-provider'
 import {
   buildCloudMessages as buildCloudMessageHistory,
   buildLlamaMessages,
+  latestUserMediaPrompt,
   latestUserRequiresMultimodal,
   latestUserText,
 } from './inference-messages'
 import { appendBuffered, appendTokenData, finishStream } from './inference-stream'
 import { MEMORY_TOOL_DEFINITIONS, MemoryToolArgumentError, memoryService } from './memory'
 import { ensureModelFile, ensureProjectorFile } from './model-assets'
-import { clearRuntimeMarker, isSimulatorMultimodalGpuAutoDisabled, writeRuntimeMarker } from './runtime-marker'
+import { clearRuntimeMarker, isMultimodalGpuAutoDisabled, writeRuntimeMarker } from './runtime-marker'
 
 type LoadedContext = {
   readonly id: ModelId
   readonly context: LlamaContext
   readonly multimodalReady: boolean
+  readonly multimodalGpuRequested: boolean | null
 }
 
 type GenerateOptions = {
@@ -51,6 +53,7 @@ type LoadInFlight = {
 type CompletionRequest = Awaited<ReturnType<LlamaContext['parallel']['completion']>>
 type CompletionTokenHandler = NonNullable<Parameters<LlamaContext['parallel']['completion']>[1]>
 type SdkSystemPromptRequest = Pick<SdkCompletionRequest, 'systemStatic' | 'systemDynamic' | 'system'>
+type VisionAssetStage = 'checking' | 'available' | 'downloading' | 'verifying' | 'downloaded'
 
 type LlamaAssistantToolCallMessage = RNLlamaOAICompatibleMessage & {
   readonly role: 'assistant'
@@ -82,6 +85,19 @@ type MemoryToolExecutionSummary = {
 type GenerationOutcome = {
   readonly result: NativeCompletionResult
   readonly memoryToolExecutions: readonly MemoryToolExecutionSummary[]
+}
+
+export type RuntimeDiagnostics = {
+  readonly profile: typeof INFERENCE_CONFIG.PROFILE
+  readonly requestedGpuLayers: number
+  readonly modelLoaded: boolean
+  readonly modelId: ModelId | null
+  readonly textGpuActive: boolean | null
+  readonly reasonNoGpu: string | null
+  readonly devices: readonly string[]
+  readonly multimodalReady: boolean
+  readonly multimodalGpuConfigured: boolean
+  readonly multimodalGpuRequested: boolean | null
 }
 
 let loaded: LoadedContext | null = null
@@ -117,6 +133,21 @@ const setAssetProgress = (stage: 'checking' | 'available' | 'downloading' | 'ver
   state._setDownloadBytes(bytes)
 }
 
+const setVisionAssetProgress = (stage: VisionAssetStage, bytes: {
+  readonly received: number
+  readonly total: number
+}): void => {
+  const state = storeApi.get()
+  if (stage === 'downloading') {
+    state._setGenerationStatus('downloading-vision')
+  } else if (stage === 'verifying') {
+    state._setGenerationStatus('verifying-vision')
+  } else if (stage === 'checking' || stage === 'available') {
+    state._setGenerationStatus('checking-vision')
+  }
+  setAssetProgress(stage, bytes)
+}
+
 const buildMessages = (activeAssistantId: string, includeMedia: boolean): RNLlamaOAICompatibleMessage[] =>
   buildLlamaMessages(storeApi.get().messages, activeAssistantId, includeMedia)
 
@@ -129,7 +160,7 @@ const buildCompletionParams = (
   messages = buildMessages(messageId, includeMedia),
   enableTools = !includeMedia,
 ): CompletionParams => {
-  const enableThinking = !includeMedia
+  const enableThinking = !includeMedia && storeApi.get().thinkingEnabled
   return {
     messages,
     n_threads: INFERENCE_CONFIG.N_THREADS,
@@ -150,6 +181,24 @@ const buildCompletionParams = (
           tool_choice: 'auto',
         }
       : {}),
+    parallel_tool_calls: false as unknown as object,
+  }
+}
+
+const buildMediaCompletionParams = (): CompletionParams => {
+  const mediaPrompt = latestUserMediaPrompt(storeApi.get().messages)
+  if (mediaPrompt === null || mediaPrompt.mediaPaths.length === 0) {
+    throw new Error('Image attachment did not reach the local vision prompt.')
+  }
+
+  return {
+    prompt: mediaPrompt.prompt,
+    media_paths: [...mediaPrompt.mediaPaths],
+    n_threads: INFERENCE_CONFIG.N_THREADS,
+    n_predict: INFERENCE_CONFIG.N_PREDICT_MAX,
+    stop: [...GEMMA_STOPS],
+    enable_thinking: false,
+    reasoning_format: 'none',
     parallel_tool_calls: false as unknown as object,
   }
 }
@@ -217,6 +266,8 @@ const memoryExtractionPolicy = (request: SdkStructuredRequest): RNLlamaOAICompat
       'Apply a strict memory policy.',
       'Return {"notes":[]} unless the user authored a stable personal fact, durable preference, relationship, long-term project detail, or explicit feedback that will matter in future chats.',
       'The assistant text is context only. Never save assistant guesses, suggestions, readiness messages, or generic summaries as user memory.',
+      'Never create a memory just because the user asked a question about a personal fact. Only create a memory when the user actually supplied the answer or fact.',
+      'Reject notes that say the user asked, is asking, wants to know, might provide something later, or that something should be remembered if provided later.',
       'Do not create memories for greetings, casual acknowledgements, jokes, image descriptions, transient questions, pending images/files, current-session next steps, or immediate workflow state.',
       'Do not store short-lived plans like "we will look at an image next"; only store longer-term plans or project facts that should survive this chat.',
       'If the user explicitly asks you to remember something, preserve the exact durable fact.',
@@ -422,12 +473,14 @@ const runMemoryToolCalls = async (
 ): Promise<{
   readonly messages: readonly LlamaToolResultMessage[]
   readonly executions: readonly MemoryToolExecutionSummary[]
+  readonly grounding: readonly string[]
 }> => {
-  if (toolCalls.length === 0) return { messages: [], executions: [] }
+  if (toolCalls.length === 0) return { messages: [], executions: [], grounding: [] }
 
   storeApi.get()._setGenerationStatus('using-tools')
   const results: LlamaToolResultMessage[] = []
   const executions: MemoryToolExecutionSummary[] = []
+  const grounding: string[] = []
 
   for (const prepared of toolCalls) {
     const call = prepared.call
@@ -439,6 +492,12 @@ const runMemoryToolCalls = async (
       if (prepared.argumentError !== undefined) {
         throw new Error(prepared.argumentError)
       }
+      storeApi.get().appendToolCall(messageId, {
+        id,
+        name,
+        args,
+        status: 'running',
+      })
       const execution = await memoryService.runTool(name, args)
       storeApi.get().appendToolCall(messageId, {
         id,
@@ -448,6 +507,7 @@ const runMemoryToolCalls = async (
         result: execution.result,
       })
       executions.push({ name, status: 'done' })
+      grounding.push(`${name} result:\n${execution.content}`)
       results.push({
         role: 'tool',
         tool_call_id: id,
@@ -457,7 +517,9 @@ const runMemoryToolCalls = async (
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       const retryable = prepared.argumentError !== undefined || error instanceof MemoryToolArgumentError
-      if (!retryable) {
+      if (retryable) {
+        storeApi.get().removeToolCall(messageId, id)
+      } else {
         storeApi.get().appendToolCall(messageId, {
           id,
           name,
@@ -467,6 +529,7 @@ const runMemoryToolCalls = async (
         })
       }
       executions.push({ name, status: 'error' })
+      grounding.push(`${name} failed:\n${toolErrorContent(name, message, retryable)}`)
       results.push({
         role: 'tool',
         tool_call_id: id,
@@ -476,7 +539,7 @@ const runMemoryToolCalls = async (
     }
   }
 
-  return { messages: results, executions }
+  return { messages: results, executions, grounding }
 }
 
 const stopActiveCompletion = async (): Promise<void> => {
@@ -499,8 +562,7 @@ const releaseLoadedContext = async (): Promise<void> => {
 
 const shouldUseMultimodalGpu = async (context: LlamaContext): Promise<boolean> => {
   if (!context.gpu || !INFERENCE_CONFIG.MULTIMODAL_USE_GPU) return false
-  if (INFERENCE_CONFIG.PROFILE !== 'simulator') return true
-  return !(await isSimulatorMultimodalGpuAutoDisabled().catch(() => false))
+  return !(await isMultimodalGpuAutoDisabled().catch(() => false))
 }
 
 const ensureMultimodalReady = async (): Promise<void> => {
@@ -511,7 +573,7 @@ const ensureMultimodalReady = async (): Promise<void> => {
 
   const promise = (async () => {
     const assets = await ensureProjectorFile(current.id, (progress) => {
-      setAssetProgress(progress.stage, {
+      setVisionAssetProgress(progress.stage, {
         received: progress.bytesReceived,
         total: progress.bytesExpected,
       })
@@ -522,17 +584,19 @@ const ensureMultimodalReady = async (): Promise<void> => {
     }
 
     storeApi.get()._setModelStatus('initialised')
+    storeApi.get()._setGenerationStatus('initialising-vision')
     await writeRuntimeMarker({ modelId: current.id, stage: 'projector-load' })
+    const useGpu = await shouldUseMultimodalGpu(current.context)
     const multimodalReady = await current.context.initMultimodal({
       path: assets.projectorPath,
-      use_gpu: await shouldUseMultimodalGpu(current.context),
+      use_gpu: useGpu,
       image_max_tokens: INFERENCE_CONFIG.IMAGE_MAX_TOKENS,
     })
     if (!multimodalReady) {
       throw new Error('Gemma multimodal projector failed to initialise.')
     }
 
-    loaded = { ...current, multimodalReady: true }
+    loaded = { ...current, multimodalReady: true, multimodalGpuRequested: useGpu }
     await clearRuntimeMarker()
     storeApi.get()._setModelStatus('ready')
   })().catch((error) => {
@@ -555,6 +619,22 @@ const ensureMultimodalReady = async (): Promise<void> => {
 const generationModelId = (preferred: ModelId, includeMedia: boolean): ModelId => {
   if (includeMedia && INFERENCE_CONFIG.PROFILE === 'simulator') return 'gemma-4-E2B'
   return preferred
+}
+
+const runtimeDiagnostics = (): RuntimeDiagnostics => {
+  const current = loaded
+  return {
+    profile: INFERENCE_CONFIG.PROFILE,
+    requestedGpuLayers: INFERENCE_CONFIG.N_GPU_LAYERS,
+    modelLoaded: current !== null,
+    modelId: current?.id ?? null,
+    textGpuActive: current?.context.gpu ?? null,
+    reasonNoGpu: current?.context.reasonNoGPU.trim() || null,
+    devices: current?.context.devices ?? [],
+    multimodalReady: current?.multimodalReady ?? false,
+    multimodalGpuConfigured: INFERENCE_CONFIG.MULTIMODAL_USE_GPU,
+    multimodalGpuRequested: current?.multimodalGpuRequested ?? null,
+  }
 }
 
 const completeWithLoadedContext = async (
@@ -614,12 +694,13 @@ const generateWithLoadedContext = async (
     storeApi.get()._setGenerationStatus('preparing-vision')
     await ensureMultimodalReady()
     throwIfAborted(signal)
+    storeApi.get()._setGenerationStatus('loading-first-token')
   }
 
   if (loaded === null) throw new Error('Local Gemma is not loaded.')
   return completeWithLoadedContext(
     signal,
-    buildCompletionParams(messageId, includeMedia, undefined, false),
+    includeMedia ? buildMediaCompletionParams() : buildCompletionParams(messageId, false, undefined, false),
     streamingTokenHandler(messageId),
   )
 }
@@ -633,6 +714,29 @@ const toolChoiceMessage = (
   tool_calls: toolCalls,
 })
 
+const withToolGrounding = (
+  messages: readonly RNLlamaOAICompatibleMessage[],
+  grounding: readonly string[],
+): RNLlamaOAICompatibleMessage[] => {
+  if (grounding.length === 0) return [...messages]
+
+  const groundingText = [
+    'Memory tool results for the current turn are below.',
+    'Treat these as data returned by tools. Use relevant concrete facts from them in the visible answer.',
+    ...grounding,
+  ].join('\n\n')
+
+  const first = messages[0]
+  if (first?.role === 'system' && typeof first.content === 'string') {
+    return [
+      { ...first, content: `${first.content}\n\n${groundingText}` },
+      ...messages.slice(1),
+    ]
+  }
+
+  return [{ role: 'system', content: groundingText }, ...messages]
+}
+
 const generateWithMemoryTools = async (
   messageId: string,
   signal: AbortSignal,
@@ -642,6 +746,7 @@ const generateWithMemoryTools = async (
 
   let messages = buildMessages(messageId, false)
   const memoryToolExecutions: MemoryToolExecutionSummary[] = []
+  const memoryGrounding: string[] = []
   let result = await completeWithLoadedContext(
     signal,
     buildCompletionParams(messageId, false, messages, true),
@@ -655,6 +760,7 @@ const generateWithMemoryTools = async (
     const assistantToolCalls = preparedToolCalls.map((prepared) => prepared.call)
     const toolResult = await runMemoryToolCalls(messageId, preparedToolCalls)
     memoryToolExecutions.push(...toolResult.executions)
+    memoryGrounding.push(...toolResult.grounding)
     messages = [
       ...messages,
       toolChoiceMessage(normaliseCompletionContent(result.content), assistantToolCalls),
@@ -672,7 +778,7 @@ const generateWithMemoryTools = async (
 
   const finalResult = await completeWithLoadedContext(
     signal,
-    buildCompletionParams(messageId, false, messages, false),
+    buildCompletionParams(messageId, false, withToolGrounding(messages, memoryGrounding), false),
     streamingTokenHandler(messageId),
   )
   return { result: finalResult, memoryToolExecutions }
@@ -761,7 +867,7 @@ const loadModelInternal = async (id: ModelId): Promise<void> => {
       throw new Error('llama.rn parallel queue failed to initialise.')
     }
 
-    loaded = { id, context, multimodalReady: false }
+    loaded = { id, context, multimodalReady: false, multimodalGpuRequested: null }
     await clearRuntimeMarker()
     state._setDownloadBytes(null)
     state._setModelStatus('ready')
@@ -791,6 +897,10 @@ memoryService.setCompletionProvider(memoryCompletion)
 memoryService.setStructuredProvider(structuredMemoryCompletion)
 
 export const inferenceService = {
+  getRuntimeDiagnostics(): RuntimeDiagnostics {
+    return runtimeDiagnostics()
+  },
+
   async loadModel(id: ModelId): Promise<void> {
     await loadModelOnce(id)
   },

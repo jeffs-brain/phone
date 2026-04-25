@@ -26,8 +26,8 @@ export default function Memories() {
   const memoryNotesStatus = useStore((s) => s.memoryNotesStatus)
   const memoryNotesError = useStore((s) => s.memoryNotesError)
   const lastExtractionSummary = useStore((s) => s.lastExtractionSummary)
-  const toolLog = useStore((s) => s.toolLog)
-  const recentMemoryLog = useMemo(() => recentVisibleMemoryLog(toolLog), [toolLog])
+  const memoryActivityLog = useStore((s) => s.memoryActivityLog)
+  const recentMemoryLog = useMemo(() => recentVisibleMemoryLog(memoryActivityLog), [memoryActivityLog])
   const filteredNotes = useMemo(
     () => filterMemoryNotes(memoryNotes, searchQuery),
     [memoryNotes, searchQuery],

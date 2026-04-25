@@ -24,6 +24,7 @@ export type Slice<T> = StateCreator<RootState, Mutators, [], T>
 
 export type ContentPart =
   | { type: 'text'; text: string }
+  | { type: 'file'; name: string; text: string; mimeType?: string; size?: number; uri?: string }
   | { type: 'image'; uri: string; name?: string; mimeType?: string; width?: number; height?: number }
   | { type: 'audio'; uri: string; durationMs: number; name?: string; mimeType?: string }
 
@@ -57,6 +58,10 @@ export type GenerationStatus =
   | 'idle'
   | 'routing'
   | 'preparing-vision'
+  | 'checking-vision'
+  | 'downloading-vision'
+  | 'verifying-vision'
+  | 'initialising-vision'
   | 'loading-first-token'
   | 'thinking'
   | 'using-tools'

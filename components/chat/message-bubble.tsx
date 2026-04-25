@@ -2,9 +2,11 @@ import { useCallback } from 'react'
 import { Image, Pressable, Text, View } from 'react-native'
 
 import {
+  getFileParts,
   getImageParts,
   getMessageText,
   getThinkingDetail,
+  toolCallDetail,
   toolCallLabel,
 } from '../../lib/chat/message-helpers'
 import { PROVIDER_LABELS } from '../../lib/chat/status-helpers'
@@ -29,9 +31,10 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   const text = getMessageText(message)
   const thinking = isAssistant ? getThinkingDetail(message.thinking) : null
   const images = getImageParts(message)
+  const files = getFileParts(message)
   const hasAnswer = text.trim() !== ''
   const displayText = hasAnswer ? text : 'Thinking...'
-  const showAnswerText = hasAnswer || (isAssistant && thinking === null && images.length === 0)
+  const showAnswerText = hasAnswer || (isAssistant && thinking === null && images.length === 0 && files.length === 0)
   const isSpeakingThisMessage = voiceStatus === 'speaking' && ttsCurrent?.messageId === message.id
   const canSpeakMessage = isAssistant && voiceEnabled && hasAnswer && message.streamingText === undefined
   const speechDisabled = !canSpeakMessage || (voiceStatus !== 'idle' && !isSpeakingThisMessage)
@@ -88,22 +91,43 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         {thinking === null ? null : <ThinkingDisclosure thinking={thinking} />}
         {message.toolCalls === undefined || message.toolCalls.length === 0 ? null : (
           <View style={styles.toolCallStrip}>
-            {message.toolCalls.map((toolCall) => (
-              <Text key={toolCall.id} style={styles.toolCallText}>
-                {toolCallLabel(toolCall)}
-              </Text>
-            ))}
+            {message.toolCalls.map((toolCall) => {
+              const detail = toolCallDetail(toolCall)
+              return (
+                <View key={toolCall.id} style={styles.toolCallRow}>
+                  <Text style={styles.toolCallText}>
+                    {toolCallLabel(toolCall)}
+                  </Text>
+                  {detail === null ? null : <Text style={styles.toolCallDetailText}>{detail}</Text>}
+                </View>
+              )
+            })}
           </View>
         )}
         {images.length === 0 ? null : (
-          <View style={styles.messageImageGrid}>
+          <View style={images.length === 1 ? styles.messageImageSingle : styles.messageImageGrid}>
             {images.map((part, index) => (
               <Image
                 key={`${part.uri}-${index}`}
                 resizeMode="cover"
                 source={{ uri: part.uri }}
-                style={styles.messageImage}
+                style={images.length === 1 ? styles.messageImageFull : styles.messageImageThumb}
               />
+            ))}
+          </View>
+        )}
+        {files.length === 0 ? null : (
+          <View style={styles.fileAttachmentList}>
+            {files.map((part, index) => (
+              <View key={`${part.name}-${part.size ?? 0}-${index}`} style={styles.fileAttachment}>
+                <Text style={styles.fileAttachmentIcon}>{'\u{1F4C4}'}</Text>
+                <View style={styles.fileAttachmentTextGroup}>
+                  <Text numberOfLines={1} style={styles.fileAttachmentName}>{part.name}</Text>
+                  <Text numberOfLines={1} style={styles.fileAttachmentMeta}>
+                    {part.mimeType ?? 'Text file'}
+                  </Text>
+                </View>
+              </View>
             ))}
           </View>
         )}

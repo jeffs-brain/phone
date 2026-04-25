@@ -10,7 +10,7 @@ import {
   readRuntimeMarker,
   clearRuntimeMarker,
   describeRuntimeMarker,
-  disableSimulatorMultimodalGpu,
+  disableMultimodalGpu,
 } from '../services/runtime-marker'
 import { storeApi } from '../store'
 
@@ -20,7 +20,7 @@ export default function RootLayout() {
       .then(async (marker) => {
         if (marker === null) return
         if (marker.stage === 'projector-load') {
-          await disableSimulatorMultimodalGpu()
+          await disableMultimodalGpu()
         }
         const state = storeApi.get()
         state._setModelId(marker.modelId)

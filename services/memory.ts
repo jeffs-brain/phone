@@ -11,6 +11,7 @@ import {
   type CompletionRequest as SdkCompletionRequest,
   type CompletionResponse as SdkCompletionResponse,
   type ExtractResult,
+  type ExtractedMemory,
   type MemoryClient,
   type Provider,
   type RecallHit as SdkRecallHit,
@@ -30,6 +31,7 @@ const HASH_EMBEDDING_DIM = 384
 const MAX_TOOL_RECALL_HITS = 5
 const MAX_LIST_NOTES = 12
 const MEMORY_NOTE_PREVIEW_LENGTH = 180
+const MAX_EXTRACTED_MEMORIES_PER_TURN = 3
 const MANAGED_MEMORY_PATH_PREFIX = 'memory/global/'
 const GENERATED_MEMORY_INDEX_PATH = `${MANAGED_MEMORY_PATH_PREFIX}MEMORY.md`
 
@@ -53,6 +55,10 @@ type ExtractTurnOptions = {
 }
 
 type JsonRecord = Record<string, unknown>
+type LexicalRecallCandidate = {
+  readonly note: StoredMemoryNote
+  readonly score: number
+}
 
 export class MemoryToolArgumentError extends Error {
   constructor(message: string) {
@@ -101,6 +107,107 @@ const noteTitle = (text: string): string => {
 
 const isRecord = (value: unknown): value is JsonRecord =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const MEMORY_RECALL_STOP_WORDS = new Set([
+  'a',
+  'about',
+  'am',
+  'an',
+  'and',
+  'are',
+  'as',
+  'at',
+  'be',
+  'can',
+  'could',
+  'did',
+  'do',
+  'does',
+  'for',
+  'from',
+  'had',
+  'has',
+  'have',
+  'her',
+  'his',
+  'how',
+  'i',
+  'in',
+  'is',
+  'it',
+  'me',
+  'my',
+  'of',
+  'on',
+  'or',
+  'our',
+  'please',
+  'recall',
+  'remember',
+  'stored',
+  'tell',
+  'that',
+  'the',
+  'their',
+  'this',
+  'to',
+  'was',
+  'were',
+  'what',
+  'when',
+  'where',
+  'which',
+  'who',
+  'why',
+  'with',
+  'would',
+  'you',
+  'your',
+])
+
+const LOW_VALUE_MEMORY_PATTERNS: readonly RegExp[] = [
+  /\bthe user (?:is )?(?:asking|asked) (?:for|about|to know)\b/i,
+  /\bthe user wants to know\b/i,
+  /\bif the user provides\b/i,
+  /\bshould be remembered if\b/i,
+  /\bno (?:specific )?memor(?:y|ies)\b/i,
+  /\bnot (?:stored|found)\b/i,
+]
+
+const memorySearchText = (note: StoredMemoryNote): string =>
+  [
+    note.name,
+    note.description,
+    note.content,
+    note.indexEntry,
+    String(note.path),
+    ...note.tags,
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.trim() !== '')
+    .join('\n')
+
+const tokenVariants = (token: string): readonly string[] => {
+  const variants = new Set([token])
+  if (token.length > 4 && token.endsWith('ies')) variants.add(`${token.slice(0, -3)}y`)
+  if (token.length > 4 && token.endsWith('es')) variants.add(token.slice(0, -2))
+  if (token.length > 3 && token.endsWith('s')) variants.add(token.slice(0, -1))
+  return [...variants]
+}
+
+const memoryTokens = (text: string): Set<string> => {
+  const tokens = text.toLocaleLowerCase('en').match(/[\p{L}\p{N}]+/gu) ?? []
+  const out = new Set<string>()
+  for (const token of tokens) {
+    if (token.length < 3 || MEMORY_RECALL_STOP_WORDS.has(token)) continue
+    for (const variant of tokenVariants(token)) out.add(variant)
+  }
+  return out
+}
+
+const isLowValueMemoryText = (text: string): boolean =>
+  LOW_VALUE_MEMORY_PATTERNS.some((pattern) => pattern.test(text))
+
+const isLowValueNote = (note: StoredMemoryNote): boolean => isLowValueMemoryText(memorySearchText(note))
 
 const stringArg = (args: JsonRecord, name: string): string => {
   const value = args[name]
@@ -154,6 +261,13 @@ const toRecallHit = (hit: SdkRecallHit): RecallHit => {
     text,
   }
 }
+
+const recallHitFromNote = (note: StoredMemoryNote, score: number): RecallHit => ({
+  id: String(note.path),
+  score,
+  source: note.name,
+  text: note.indexEntry?.trim() || note.content.trim() || note.description.trim(),
+})
 
 const textPreview = (text: string | undefined): string | undefined => {
   const trimmed = text?.replace(/\s+/g, ' ').trim()
@@ -258,14 +372,136 @@ const appendMemoryLog = (
 }
 
 const recallSummary = (hits: readonly RecallHit[]): string => {
-  return JSON.stringify({
-    memories: hits.map((hit) => ({
-      path: hit.id,
-      source: hit.source,
-      score: hit.score,
-      text: hit.text,
-    })),
+  if (hits.length === 0) {
+    return 'Memory recall returned 0 results. No matching stored memories were found.'
+  }
+
+  return [
+    `Memory recall returned ${hits.length} result${hits.length === 1 ? '' : 's'}.`,
+    'Use these private memory facts when answering the current user question:',
+    ...hits.map((hit, index) => [
+      `${index + 1}. ${hit.text}`,
+      `   Source: ${hit.source}`,
+      `   Path: ${hit.id}`,
+      `   Score: ${hit.score.toFixed(3)}`,
+    ].join('\n')),
+  ].join('\n')
+}
+
+const lexicalRecallCandidates = async (
+  client: MemoryClient,
+  query: string,
+  excludedPaths: ReadonlySet<string>,
+): Promise<readonly LexicalRecallCandidate[]> => {
+  const queryTokens = memoryTokens(query)
+  if (queryTokens.size === 0) return []
+
+  const notes = await client.listNotes({ scope: DEFAULT_SCOPE, actorId: MEMORY_ACTOR_ID })
+  const candidates: LexicalRecallCandidate[] = []
+  for (const note of notes) {
+    const path = String(note.path)
+    if (excludedPaths.has(path) || isLowValueNote(note)) continue
+
+    const noteTokens = memoryTokens(memorySearchText(note))
+    let score = 0
+    for (const token of queryTokens) {
+      if (noteTokens.has(token)) score += 1
+    }
+    if (score === 0) continue
+
+    candidates.push({ note, score })
+  }
+
+  return candidates.sort((left, right) => {
+    if (left.score !== right.score) return right.score - left.score
+    return right.note.modified.localeCompare(left.note.modified)
   })
+}
+
+const recallMemories = async (
+  client: MemoryClient,
+  query: string,
+  topK: number,
+): Promise<RecallHit[]> => {
+  const sdkHits = (await client.recall({
+    query,
+    topK,
+    scope: DEFAULT_SCOPE,
+    actorId: MEMORY_ACTOR_ID,
+    selector: 'auto',
+  }))
+    .map(toRecallHit)
+    .filter((hit) => !isLowValueMemoryText(`${hit.source}\n${hit.text}`))
+
+  const seen = new Set(sdkHits.map((hit) => hit.id))
+  const fallbackHits = (await lexicalRecallCandidates(client, query, seen))
+    .slice(0, topK)
+    .map(({ note, score }) => recallHitFromNote(note, score / 100))
+
+  return [...sdkHits, ...fallbackHits]
+    .slice()
+    .sort((left, right) => {
+      if (left.score !== right.score) return right.score - left.score
+      return left.id.localeCompare(right.id)
+    })
+    .slice(0, topK)
+}
+
+const isUsefulExtractedMemory = (memory: ExtractedMemory): boolean => {
+  const text = [
+    memory.name,
+    memory.description,
+    memory.content,
+    memory.indexEntry,
+    ...(memory.tags ?? []),
+  ].join('\n')
+
+  if (isLowValueMemoryText(text)) return false
+  return memory.content.trim() !== '' && memory.description.trim() !== ''
+}
+
+const persistExtractedMemory = async (
+  client: MemoryClient,
+  memory: ExtractedMemory,
+): Promise<StoredMemoryNote> =>
+  await client.remember({
+    filename: memory.filename,
+    name: memory.name,
+    description: memory.description,
+    content: memory.content,
+    type: memory.type,
+    scope: memory.scope,
+    actorId: MEMORY_ACTOR_ID,
+    indexEntry: memory.indexEntry,
+    ...(memory.tags === undefined ? {} : { tags: memory.tags }),
+    ...(memory.supersedes === undefined ? {} : { supersedes: memory.supersedes }),
+    ...(memory.sessionId === undefined ? {} : { sessionId: memory.sessionId }),
+    ...(memory.sessionDate === undefined ? {} : { sessionDate: memory.sessionDate }),
+    ...(memory.observedOn === undefined ? {} : { observedOn: memory.observedOn }),
+  })
+
+const persistUsefulExtractedMemories = async (
+  client: MemoryClient,
+  extracted: readonly ExtractedMemory[],
+): Promise<readonly StoredMemoryNote[]> => {
+  const useful = extracted
+    .filter(isUsefulExtractedMemory)
+    .slice(0, MAX_EXTRACTED_MEMORIES_PER_TURN)
+
+  const created: StoredMemoryNote[] = []
+  for (const memory of useful) {
+    created.push(await persistExtractedMemory(client, memory))
+  }
+  return created
+}
+
+const pruneLowValueNotes = async (client: MemoryClient): Promise<number> => {
+  const notes = await client.listNotes({ scope: DEFAULT_SCOPE, actorId: MEMORY_ACTOR_ID })
+  const lowValueNotes = notes.filter(isLowValueNote)
+  for (const note of lowValueNotes) {
+    await client.forget(toPath(note.path))
+  }
+  return lowValueNotes.length
 }
 
 const filenameFromManagedPath = async (client: MemoryClient, rawPath: string): Promise<string> => {
@@ -312,13 +548,13 @@ const consolidationSummary = (report: {
   readonly deleted: number
   readonly promoted: number
   readonly errors: readonly string[]
-}): string => {
-  const changes = report.merged + report.deleted + report.promoted
+}, pruned: number): string => {
+  const changes = report.merged + report.deleted + report.promoted + pruned
   if (report.errors.length > 0 && changes === 0) {
     return `Memory tidy failed: ${report.errors[0] ?? 'unknown error'}`
   }
   if (changes === 0) return 'Memory tidy complete: no duplicates found'
-  return `Memory tidy complete: ${report.merged} merged, ${report.deleted} deleted, ${report.promoted} promoted`
+  return `Memory tidy complete: ${report.merged} merged, ${report.deleted + pruned} deleted, ${report.promoted} promoted`
 }
 
 export const MEMORY_TOOL_DEFINITIONS = [
@@ -494,7 +730,7 @@ export const memoryService = {
     appendMemoryLog('memory_extract', 'running')
     try {
       const client = await getMemoryClient()
-      const result = await client.extract({
+      const extracted = await client.previewExtract({
         messages: [{ role: 'user', content: userText }],
         scope: DEFAULT_SCOPE,
         actorId: MEMORY_ACTOR_ID,
@@ -502,8 +738,17 @@ export const memoryService = {
         sessionDate: observedOn,
         observedOn,
       })
+      const created = await persistUsefulExtractedMemories(client, extracted)
+      const result: ExtractResult = {
+        created,
+        skipped: created.length === 0,
+        ...(created.length === 0 ? { reason: 'no durable memories found' } : {}),
+      }
       const summary = extractionSummary(result)
       storeApi.get().setLastExtraction(summary)
+      if (created.length > 0) {
+        await refreshMemoryNotesAfterWrite(client)
+      }
       appendMemoryLog('memory_extract', 'done', summary)
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
@@ -521,7 +766,8 @@ export const memoryService = {
     try {
       const client = await getMemoryClient()
       const report = await client.consolidate({ scope: DEFAULT_SCOPE, actorId: MEMORY_ACTOR_ID })
-      const summary = consolidationSummary(report)
+      const pruned = await pruneLowValueNotes(client)
+      const summary = consolidationSummary(report, pruned)
       storeApi.get().setLastExtraction(summary)
       await refreshMemoryNotesAfterWrite(client)
       appendMemoryLog('memory_consolidate', 'done', summary)
@@ -545,13 +791,7 @@ export const memoryService = {
       const query = stringArg(args, 'query')
       const topK = optionalPositiveIntArg(args, 'topK', MEMORY_RECALL.DEFAULT_TOP_K, MAX_TOOL_RECALL_HITS)
       const client = await getMemoryClient()
-      const hits = (await client.recall({
-        query,
-        topK,
-        scope: DEFAULT_SCOPE,
-        actorId: MEMORY_ACTOR_ID,
-        selector: 'auto',
-      })).map(toRecallHit)
+      const hits = await recallMemories(client, query, topK)
       storeApi.get().setRecentRecall(hits)
       const content = recallSummary(hits)
       appendMemoryLog(name, 'done', `${hits.length} result${hits.length === 1 ? '' : 's'}`)
@@ -573,6 +813,9 @@ export const memoryService = {
 
     if (name === 'memory_remember') {
       const content = stringArg(args, 'content')
+      if (isLowValueMemoryText(content)) {
+        throw new MemoryToolArgumentError('content must be a concrete durable fact, not a question or inquiry.')
+      }
       const title = optionalStringArg(args, 'name')
       const tags = optionalStringArrayArg(args, 'tags')
       const client = await getMemoryClient()
