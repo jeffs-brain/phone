@@ -1,0 +1,329 @@
+i want you to make a plan of action to make this application have a beautiful ux ui - use the /frontend-design:frontend-design skill to explore, analyse and plan out the changes needed. I want emojis instead of these shit text buttons, i want a modern, smooth feel, brighter colors, this dark shit hurts my eyes. lets make it beautiful. plan it out thoroughly, use many subagents all using opus to do this. put the plan of action in the /Users/alexjay/code/me/big-hack-berlin folder
+
+---
+
+<task-notification>
+<task-id>aa278667b5165222b</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-alexjay-code-jeffs-brain-phone/3f4c3b3b-5efa-42b7-9968-36bf1203b46f/tasks/aa278667b5165222b.output</output-file>
+<status>completed</status>
+<summary>Agent "Chat screen UX redesign" completed</summary>
+<result>Now I have a thorough understanding of the current codebase. Here is my UX proposal.
+
+---
+
+## Jeff Phone UX Overhaul Proposal
+
+### 1. Header
+
+Replace the text-labelled buttons with 36px icon-only circles inside `LiquidGlassView` pill shapes. Left side keeps the "Jeff" title but drops the "Private phone brain" eyebrow (move it to the empty state). Right side: three glass circles -- pencil-square (new), brain icon, gear icon. On scroll, collapse the header from 60pt to 44pt using `useAnimatedStyle` + `interpolate` driven by the FlatList's `onScroll` `contentOffset.y`. The title shrinks from 32px to 20px and horizontally centres. This reclaims ~30pt on scroll.
+
+### 2. Status Panel
+
+Kill the always-visible glass panel entirely. Replace with a single-line status pill (24pt tall) that sits between header and message list, showing a coloured dot (green = ready, amber = loading, red = error) plus a terse label like "Gemma 4 E4B ready". Tap to expand into a bottom sheet (`reanimated` spring + `gesture-handler` pan-to-dismiss) showing the full provider badge, model detail, download progress, and error actions. When the model is downloading, the pill shows a thin progress bar behind the text. When generation is active, the dot pulses using a looping `withRepeat(withTiming(...))`. Net savings: ~100pt of vertical space in the default state.
+
+### 3. Message Bubbles
+
+Increase `borderRadius` to 18. User bubbles get a tail (bottom-right notch via a small rotated View or SVG triangle). Assistant bubbles get a tail bottom-left. Remove the "You" / "Jeff" role labels -- position is enough (right = user, left = Jeff). For assistant messages, show a small 24px Jeff avatar circle (a simple "J" monogram in the accent colour) to the left of the bubble on the first message in a consecutive run. Hide the provider badge from individual messages; the route detail line at the bottom becomes a subtle timestamp instead ("2s ago" or "Cloud" only if non-local). Thinking disclosure stays but uses a chevron icon instead of "Show"/"Hide" text. Tool call pills shrink to inline capsules (6pt vertical padding, no border, just a tinted background). Image grid uses `borderRadius: 14` with 2-up layout (images fill available width, aspect ratio preserved via `aspectRatio` style). Speech button moves from the meta row to a long-press context menu (see gestures below).
+
+### 4. Composer
+
+Replace the three text buttons (Photo, File, Mic) with a single "+" circle (28px) on the left of the input that expands a horizontal tray of icon-only buttons (camera, paperclip, mic) using a `withSpring` fan-out animation. The send button becomes a 40px circle with an upward arrow icon; when generation is active it morphs (shared layout transition) into a stop-square icon with the red tint. The input field gets `borderRadius: 20` to feel rounder and more conversational. Staged attachments render as overlapping thumbnail chips above the input (like iMessage), not a separate tray with a header.
+
+### 5. Voice Experience
+
+Tapping the mic icon transitions the composer into a dedicated voice strip: the input field collapses to zero height, replaced by a centred animated waveform (three bars oscillating via `withRepeat` + staggered `withDelay`). The voice status label sits above the waveform. The partial transcript types in below it with a blinking cursor. A single large "End" pill sits where the send button was. If the user pulls up from the voice strip (pan gesture, threshold 120pt), it expands into a full-screen voice mode: dark background, large pulsing concentric rings (reanimated scale + opacity loops), the transcript in large centred text, and a prominent stop button at the bottom. Pulling down dismisses back to the strip.
+
+### 6. Empty State
+
+Centre a large 64px monogram "J" in a glass circle, below it "Hey, I'm Jeff" in 22px bold, then "Your private on-device brain. Everything stays on this phone." in 15px muted text. Below that, two suggestion chips in glass pill shapes: "Tell me something interesting" and "What can you do?" -- tapping one fills the draft and sends. Use `FadeIn.delay(200).duration(400)` from `reanimated` layout animations for a staggered entrance.
+
+### 7. Animations
+
+- Message appear: `FadeInDown.springify()` on each new bubble.
+- Send: the send button does a quick `withSequence(withTiming(0.85), withSpring(1))` scale bounce on press.
+- Status dot pulse: `withRepeat(withSequence(withTiming(0.4), withTiming(1)), -1, true)` on opacity.
+- Header collapse: `interpolate(scrollY, [0, 60], [60, 44])` on the header container height.
+- Composer "+" fan-out: `withSpring` on `translateX` for each icon, staggered by 30ms.
+- Voice waveform: three bars with `withRepeat(withTiming)` on `scaleY`, each delayed 100ms.
+- Thinking chevron: `withTiming` 180-degree rotation on expand/collapse.
+
+### 8. Gestures
+
+- **Long-press bubble**: opens a context menu (Copy, Speak, Route info) using a scaled spring-in overlay.
+- **Swipe left on assistant bubble**: reveals a "Reply" action strip (quote-reply into composer).
+- **Pull-down at top of list**: triggers "load earlier messages" if thread history exists, with a subtle haptic.
+- **Swipe down on voice strip**: dismiss voice mode. Swipe up: expand to full-screen voice.
+- **Double-tap bubble**: copies text to clipboard with a brief "Copied" toast.</result>
+<usage><total_tokens>30864</total_tokens><tool_uses>3</tool_uses><duration_ms>57181</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>aa335153f277bd75c</task-id>
+<tool-use-id>toolu_01Svy9WSxGdWyiyTPXiNhejV</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-alexjay-code-jeffs-brain-phone/3f4c3b3b-5efa-42b7-9968-36bf1203b46f/tasks/aa335153f277bd75c.output</output-file>
+<status>completed</status>
+<summary>Agent "Settings and memories screen UX" completed</summary>
+<result>Now I have a thorough understanding of both screens. Here is the redesign proposal.
+
+---
+
+## Settings Screen Redesign
+
+**1. Overall layout and navigation**
+
+Keep the ScrollView but switch to a light theme: `#F2F2F7` background (iOS system grouped background). Replace the "Done" text button with a simple back chevron or keep "Done" as a blue tinted `Pressable` (no border, no bg -- just `#007AFF` text, top-right). Drop the eyebrow and "Model status" subtitle from the header entirely. Title becomes a large `fontSize: 34, fontWeight: '700'` left-aligned "Settings" in `#000000`, matching iOS large title style. No subtitle clutter.
+
+Group sections into iOS-style inset grouped cards: white (`#FFFFFF`) rounded rectangles with 12px radius, 16px horizontal margin, rows separated by `#C6C6C8` hairlines inset 16px from the left edge. Section headers become uppercase `#8E8E93` labels 13px, 6px above each card group. 20px vertical gap between card groups.
+
+**2. Section redesigns**
+
+**AI Model** (replaces "Local Model"): Single card group. Each model option is a row: label left, checkmark right (SF Symbols style, or the text character). Below the radio rows, a single "Load model" / "Unload model" row with a destructive-style text for unload. When downloading, replace the action row with an animated progress bar: a rounded 4px-tall bar inside a `#E5E5EA` track, fill colour `#34C759` (system green), percentage label right-aligned. Error state shows inline red text below the progress area.
+
+**Provider** (replaces "Provider Mode"): Single card group. Segmented control at the top of the card (native iOS style: `#E5E5EA` track, white selected pill, `#000000` text). Below it, provider radio rows identical to model rows with checkmarks.
+
+**Conversation**: Single card group. Each toggle is a row: emoji + label left, `Switch` right with `trackColor` `#34C759` on / `#E5E5EA` off. Rows:
+- Voice (mic emoji)
+- Remember conversations (brain emoji)
+- New chat row: no toggle, just a tappable row with a `#007AFF` "Start new chat" label and a forward chevron. Tap triggers the existing `Alert.alert` confirmation.
+
+**Developer** (replaces "Runtime Diagnostics" + "Dev mode"): Dev mode toggle lives in the Conversation card (wrench emoji). When `devMode === false`, the entire Developer card group is hidden. When visible, it is a single card group at the bottom titled "DEVELOPER" containing the current DiagnosticRow data as simple label/value rows (label left `#8E8E93`, value right `#000000`), plus the multimodal note as a footer text below the card in `#8E8E93` 12px.
+
+**Memory**: Single card group. Top row: "Stored memories" left, count badge right (e.g., a small rounded pill `#007AFF` bg, white text "12"). Second row: "Manage memories" tappable with forward chevron and `#007AFF` text. Third row: "Refresh" tappable. Last extraction summary appears as a card footer in `#8E8E93` below the group. Remove the raw error dump -- show a single-line friendly error in `#FF3B30` as a footer if present.
+
+**3. Toggle and control styling**
+
+Use React Native `Switch` with explicit `trackColor={{ false: '#E5E5EA', true: '#34C759' }}` and `thumbColor="#FFFFFF"`. Each toggle row is 44px min height, 16px horizontal padding. Emoji prefix (e.g., voice toggle, brain emoji for remember) adds visual weight without taking space. No borders on individual rows -- separation via hairlines within the card group only.
+
+**4. Dev-mode-only content**
+
+Single boolean gate. When `devMode === false`: hide the "DEVELOPER" card group entirely, hide download byte counts from the model section (show only the progress bar percentage), hide the multimodal note. The toggle itself stays visible in the Conversation card so users can opt back in.
+
+**5. Model download progress**
+
+Replace the current text-only `formatDownload` output with a visual bar. A `View` with `height: 4, borderRadius: 2, backgroundColor: '#E5E5EA'` as the track. Inner `View` with `width: ${percentage}%`, same height, `backgroundColor: '#34C759'`, animated with `LayoutAnimation` or `Animated`. Below the bar: single line of text -- "Downloading Gemma 4 E4B -- 67%" in `#8E8E93` 13px. On completion, bar fills to 100% briefly then fades to the "Model ready" state.
+
+---
+
+## Memories Screen Redesign
+
+**1. Memory card redesign**
+
+Same light theme (`#F2F2F7` bg, `#FFFFFF` cards). Each memory becomes a card with:
+- Top: name in `#000000` 17px semibold, plus a type pill (e.g., rounded capsule `#E5E5EA` bg, `#8E8E93` text, 11px).
+- Below: preview text in `#3C3C43` 15px, max 3 lines with ellipsis.
+- Bottom row: tags as small tinted pills (`#007AFF` at 10% opacity bg, `#007AFF` text), relative date ("2 days ago") right-aligned in `#8E8E93`.
+- Remove file path entirely from the default view. Only show it inside the expanded detail when `devMode` is on.
+- Tap the card itself to expand (not a separate button). Expanded state shows content, index entry, and created date below a hairline divider within the same card. Smooth `LayoutAnimation` transition.
+
+**2. Empty state**
+
+Centre of the screen. Large emoji (brain, or sparkles) at 48px. Below: "Jeff hasn't stored any memories yet" in `#000000` 20px semibold. Subtext: "As you chat, Jeff will remember the important things about you." in `#8E8E93` 15px. No bordered container -- just centred text floating on the `#F2F2F7` background.
+
+**3. Delete flow**
+
+Remove the always-visible red Delete button. Instead: swipe-to-delete on the card (using `Swipeable` from react-native-gesture-handler, or a long-press). Swipe reveals a red "Forget" action pane. The `Alert.alert` confirmation becomes: title "Forget this memory?", message shows only the memory name (not the file path), buttons "Keep" (cancel) and "Forget" (destructive). Softer language throughout.
+
+**4. Activity log**
+
+Hidden by default. Only visible when `devMode` is on. When shown, it appears as a collapsible section at the bottom -- a single tappable row "Recent activity" with a disclosure chevron, expanding to show the log entries. Each entry uses a simpler layout: tool name left, status pill (green for done, amber for running, red for error) right, timestamp below in `#8E8E93`.
+
+**5. Search/filter**
+
+Add a `TextInput` search bar at the top (below header, above cards) with the iOS search bar style: `#E5E5EA` rounded rect, `#8E8E93` placeholder "Search memories", magnifying glass icon. Filters by name, preview text, and tags. Below the search bar, a horizontal ScrollView of tag filter pills -- tapping a tag filters to memories with that tag. Active filter pill gets `#007AFF` bg with white text. Keep it simple: client-side filter over the already-loaded `memoryNotes` array using `useMemo`.</result>
+<usage><total_tokens>44396</total_tokens><tool_uses>4</tool_uses><duration_ms>65855</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>ac7d637322dac860b</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-alexjay-code-jeffs-brain-phone/3f4c3b3b-5efa-42b7-9968-36bf1203b46f/tasks/ac7d637322dac860b.output</output-file>
+<status>completed</status>
+<summary>Agent "Animation and motion design plan" completed</summary>
+<result>Now I have a thorough understanding of the codebase. Here is the animation plan.
+
+---
+
+## Jeff Phone Animation Plan
+
+### Tier 1 -- Must-Have (ship-blocking quality feel)
+
+**1. New message appearing (items 1, 10)**
+Reanimated `entering` prop on `MessageBubble` wrapper. User bubbles: `SlideInRight.duration(280).easing(Easing.out(Easing.cubic))`. Assistant bubbles: `FadeIn.duration(220).delay(60)`. Empty state entrance: `FadeIn.duration(400)`. No gesture needed. Use `Animated.View` wrapping each bubble inside `renderItem`; keep `FlatList` as-is since `entering`/`exiting` works per-mount.
+
+**2. Send button press (item 3)**
+`useAnimatedStyle` with `withSequence(withTiming(0.92, 80ms), withTiming(1, 140ms))` scale on press-in, driven by `useSharedValue`. Pair with `Haptics.impactAsync(ImpactFeedbackStyle.Light)`. No gesture handler needed -- hook into Pressable `onPressIn`/`onPressOut`. Apply same pattern to all header action buttons (item 11) and the cancel button.
+
+**3. Voice state transitions (items 4, 5)**
+Voice tray: `entering={FadeIn.duration(200)}` `exiting={FadeOut.duration(160)}`. Mic button while recording: continuous `withRepeat(withSequence(withTiming(1.12, 600ms), withTiming(1.0, 600ms)))` scale pulse via `useAnimatedStyle`. Add a subtle opacity pulse (0.85 to 1.0) on the same cadence. Transition between voice status labels should cross-fade with `Layout.duration(200)`. `Haptics.impactAsync(Medium)` on recording start, `Haptics.notificationAsync(Success)` on transcription complete.
+
+**4. Thinking disclosure expand/collapse (item 9)**
+Replace the boolean show/hide with `Animated.View` using `entering={FadeIn.duration(180)}` `exiting={FadeOut.duration(120)}` on the text block. Add `Layout.duration(250).easing(Easing.inOut(Easing.cubic))` on the parent to animate the height change. No gesture needed.
+
+**5. Staged attachment appear/remove (item 8)**
+Each `StagedAttachmentPreview`: `entering={FadeIn.duration(200).springify()}`, `exiting={FadeOut.duration(150)}`. Remove button triggers `Haptics.impactAsync(Light)`. `Layout` transition on the `ScrollView` wrapper for reflow.
+
+**6. Status panel collapse/expand (item 6)**
+Wrap the status panel content in `Animated.View` with `Layout.duration(300).easing(Easing.inOut(Easing.cubic))`. Error action buttons: `entering={FadeIn.duration(200).delay(100)}`. No gesture needed.
+
+### Tier 2 -- High Impact Polish
+
+**7. Attachment tray slide-in/out (item 7)**
+`entering={SlideInDown.duration(250).easing(Easing.out(Easing.cubic))}`, `exiting={SlideOutDown.duration(180)}`. Apply to the `StagedAttachmentTray` wrapper.
+
+**8. Memory card expand/collapse (item 17)**
+Detail panel: `entering={FadeIn.duration(200)}`, `exiting={FadeOut.duration(140)}`. Parent card: `Layout.duration(280)` for smooth height. `Haptics.impactAsync(Light)` on toggle.
+
+**9. Memory card delete (item 18)**
+`exiting={FadeOut.duration(250).withCallback(() =&gt; /* cleanup */)}` combined with `ZoomOut.duration(250)`. The card scales to 0.95 and fades simultaneously. `Haptics.notificationAsync(Success)` on confirm.
+
+**10. Memory card entrance stagger (item 19)**
+Each `MemoryNoteCard` uses `entering={FadeInDown.delay(index * 60).duration(300)}`. Cap delay at 8 cards (480ms total stagger) to keep it snappy.
+
+**11. Option button selection (item 16)**
+Selected state border colour animates via `useAnimatedStyle` with `withTiming` (200ms, `Easing.out(Easing.quad)`). Background colour interpolates between unselected and selected. `Haptics.selectionAsync()` on select.
+
+**12. Toggle switch enhancement (item 15)**
+Use the native `Switch` `trackColor`/`thumbColor` props (already animated by iOS). Add `Haptics.selectionAsync()` on value change. No reanimated needed.
+
+**13. Model download progress (item 14)**
+Animated width via `useAnimatedStyle` where `width` is `withTiming(percentage + '%', { duration: 400, easing: Easing.out(Easing.quad) })`. Pair with a subtle shimmer using `withRepeat(withTiming)` on an overlay opacity. Lives in Settings.
+
+### Tier 3 -- Nice-to-Have
+
+**14. Screen transitions (item 20)**
+Expo Router already handles modal presentation for Settings/Memories. Enhance with `animation: 'slide_from_bottom'` in screen options (already native). For the chat screen, the default stack push is fine.
+
+**15. Streaming text polish (item 2)**
+The streaming text already works character-by-character. Add a blinking cursor: a 1px-wide `Animated.View` at the end of text with `withRepeat(withSequence(withTiming(1, 500ms), withTiming(0, 500ms)))` opacity. Remove cursor when streaming completes.
+
+**16. Pull-to-refresh (item 21)**
+Not a natural fit for a chat list (newest at bottom). Skip unless users request it. If added later, use FlatList's `onRefresh` with a custom animated header.
+
+**17. Section expand/collapse in Settings (item 13)**
+Currently all sections are always visible. If collapsible sections are added in the redesign, use `Layout.duration(300)` with `entering`/`exiting` on the children -- same pattern as thinking disclosure.
+
+### Haptic Feedback Summary (item 22)
+
+| Moment | Type |
+|---|---|
+| Send message | `impactAsync(Light)` |
+| Start recording | `impactAsync(Medium)` |
+| Transcription done | `notificationAsync(Success)` |
+| Attachment added/removed | `impactAsync(Light)` |
+| Option/toggle selection | `selectionAsync()` |
+| Memory deleted | `notificationAsync(Success)` |
+| Error displayed | `notificationAsync(Error)` |
+| Header button press | `impactAsync(Light)` |
+
+### Global Easing Convention
+
+Use `Easing.out(Easing.cubic)` for entrances (fast start, gentle land), `Easing.in(Easing.cubic)` for exits, and `Easing.inOut(Easing.cubic)` for layout shifts. Keep durations between 140-300ms. Nothing should ever exceed 400ms -- the app should feel instant, not theatrical.
+
+### Implementation Note
+
+All animations use `react-native-reanimated` which is already installed at v4.2.1. The `entering`/`exiting` layout animations are the lowest-effort, highest-impact approach since they only require swapping `View` for `Animated.View` and adding props. Haptics require adding `expo-haptics` as a dependency. No shared element transitions are needed for the current screen structure.</result>
+<usage><total_tokens>47892</total_tokens><tool_uses>8</tool_uses><duration_ms>60009</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a65063d01f9ca1e4b</task-id>
+<tool-use-id>toolu_01CLJdfwnmmH6uCgohn4JsG4</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-alexjay-code-jeffs-brain-phone/3f4c3b3b-5efa-42b7-9968-36bf1203b46f/tasks/a65063d01f9ca1e4b.output</output-file>
+<status>completed</status>
+<summary>Agent "Typography and component design" completed</summary>
+<result>Now I have a thorough understanding of the current codebase. Here is the design system proposal.
+
+---
+
+## Jeff Phone Design System Proposal
+
+### Typography
+
+**Type scale** (base unit 15px body):
+
+| Role | Size | Weight | Line Height | Letter Spacing | Use |
+|---|---|---|---|---|---|
+| Display | 34 | 700 | 40 | -0.5 | Screen title ("Jeff") |
+| Heading | 22 | 700 | 28 | -0.3 | Section pages ("Settings", "Memories") |
+| Subheading | 17 | 600 | 22 | -0.2 | Section titles, card titles |
+| Body | 15 | 400 | 22 | 0 | Message text, descriptions |
+| Body Bold | 15 | 600 | 22 | 0 | Option labels, status values |
+| Caption | 13 | 500 | 18 | 0 | Detail text, subtitles, route info |
+| Eyebrow | 11 | 700 | 14 | 0.8 | Uppercase labels ("PRIVATE PHONE BRAIN") |
+| Micro | 10 | 600 | 13 | 0.5 | Timestamps, badge text |
+
+**Font recommendation**: Stick with San Francisco (system). It is excellent for this context -- high legibility at small sizes, native feel, zero bundle cost. The brand personality comes from colour and layout, not a custom typeface. If you later want differentiation, Inter (available via expo-font, Google Fonts) is the closest thing that works cross-platform and adds geometric personality without losing readability.
+
+**Key weight rules**: Use 400 for conversational text (message bodies), 600 for labels and interactive text, 700 for titles and emphasis. Drop 800/900 entirely -- overuse of black weights is why everything currently looks the same loudness. Reserve bold (700) for the things that genuinely need to shout.
+
+### Border Radius Scale
+
+| Token | Value | Use |
+|---|---|---|
+| xs | 4 | Inline badges, tool call chips |
+| sm | 8 | Small buttons, input fields, thumbnails |
+| md | 14 | Cards, panels, option buttons |
+| lg | 20 | Message bubbles, composer bar |
+| pill | 999 | Segmented control segments, status dots |
+
+This is the single biggest change. Currently everything is 8. Bubbles at 20 immediately read as conversational; cards at 14 feel like surfaces; small controls at 8 feel tappable. Distinct radii create instant visual taxonomy.
+
+### Shadow / Elevation
+
+| Level | Shadow | Use |
+|---|---|---|
+| 0 | None | Flat cards, inline elements |
+| 1 | `{ shadowOffset: {0,1}, shadowRadius: 3, shadowOpacity: 0.15 }` | Raised cards, option buttons |
+| 2 | `{ shadowOffset: {0,4}, shadowRadius: 12, shadowOpacity: 0.25 }` | Composer bar, floating panels |
+| 3 | `{ shadowOffset: {0,8}, shadowRadius: 24, shadowOpacity: 0.35 }` | Modals, overlays |
+
+Shadow colour should be `#000000` on the bright theme. Use shadows instead of borders for elevated surfaces; use borders for flat/inset surfaces. Never combine both on the same element.
+
+### Button Hierarchy
+
+| Variant | Background | Text | Border | Radius |
+|---|---|---|---|---|
+| Primary | `#1B9E8A` (teal, solid) | `#FFFFFF` 600 | None | sm (8) |
+| Secondary | transparent | `#1B9E8A` 600 | 1px `#1B9E8A` | sm (8) |
+| Tertiary | transparent | `#1B9E8A` 600 | None | sm (8) |
+| Ghost | `rgba(0,0,0,0.04)` | `#6B7280` 600 | None | sm (8) |
+| Destructive | `#DC2626` | `#FFFFFF` 600 | None | sm (8) |
+
+All buttons: height 44 (meets Apple HIG minimum), horizontal padding 16. Primary gets subtle shadow level 1. Disabled state: 40% opacity, no other style changes.
+
+### Component Redesigns
+
+**Chat message bubble**: User bubbles get `borderRadius: 20` with bottom-right radius dropped to 6 (tail effect without an actual tail SVG). Assistant bubbles get `borderRadius: 20` with bottom-left at 6. Padding 14h / 10v. Max-width 82%. Drop the role label row entirely -- alignment (left/right) already communicates role. Show "Jeff" only on the first consecutive assistant message. Background: user = solid teal (`#1B9E8A`), assistant = `#F3F4F6` (light grey) on the bright theme.
+
+**Composer bar**: `borderRadius: lg (20)`, shadow level 2, no border. Internal input area has no visible boundary -- just padding. Action buttons sit in a row below the input. Send button is a filled circle (44x44, pill radius) with an arrow icon, teal primary colour. Attachment buttons are ghost-style text buttons. This makes the composer feel like a single cohesive surface rather than a bordered box with bordered children.
+
+**Status indicators**: Collapse the current multi-line status panel into a single-line horizontal strip: `[dot] Model ready | Streaming | Gradium STT`. Use coloured dots (green = ready, amber = working, red = error) at 8px diameter. Eyebrow weight text. This replaces the current 80px-tall panel with a 28px strip that stays out of the way.
+
+**Header**: Title left-aligned, 34px display weight. Action buttons move to a single icon-button row (no text labels). Settings = gear icon, New = plus icon, Brain = brain icon. Each is a 36x36 ghost circle. This reclaims vertical space and looks cleaner.
+
+**Section headers in settings**: Eyebrow style (11px, weight 700, uppercase, 0.8 letter-spacing) with 24px top margin and 8px bottom margin. No divider line -- the spacing and weight change is enough.
+
+**Toggle rows**: Increase border-radius to md (14). Add 2px left accent bar in teal when toggled on. Remove border entirely; use shadow level 1 instead. Switch track colour should be teal to match the brand.
+
+**Segmented control**: Pill radius on the outer container. Selected segment gets a solid teal background with white text and a subtle spring animation (Reanimated). Unselected segments are transparent with caption-weight grey text. Padding 3px inside the container for the inset look.
+
+### Spacing Scale
+
+Base unit: **4px**. Multipliers: 1 (4), 2 (8), 3 (12), 4 (16), 5 (20), 6 (24), 8 (32), 10 (40), 12 (48). Screen horizontal padding: 20 (5x). Gap between list items: 12 (3x). Section padding vertical: 24 (6x). This replaces the current ad-hoc values (18px horizontal, 14px padding, 10px gaps) with a consistent 4px grid.</result>
+<usage><total_tokens>49168</total_tokens><tool_uses>7</tool_uses><duration_ms>61980</duration_ms></usage>
+</task-notification>
+
+---
+
+ok, lets begin implementing the changes then
+
+---
+
+boot it up

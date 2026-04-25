@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.5.6",
+  "checkpoint_id": "bc0cdf449bb3",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 7,
+  "files_touched": [
+    "app/_layout.tsx",
+    "app/index.tsx",
+    "app/memories.tsx",
+    "app/settings.tsx",
+    "lib/haptics.ts",
+    "lib/theme.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/bc/0cdf449bb3/0/metadata.json",
+      "transcript": "/bc/0cdf449bb3/0/full.jsonl",
+      "content_hash": "/bc/0cdf449bb3/0/content_hash.txt",
+      "prompt": "/bc/0cdf449bb3/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 1615,
+    "cache_creation_tokens": 653645,
+    "cache_read_tokens": 3957400,
+    "output_tokens": 28858,
+    "api_call_count": 40
+  }
+}
