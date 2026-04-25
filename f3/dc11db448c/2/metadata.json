@@ -1,0 +1,86 @@
+{
+  "cli_version": "0.5.6",
+  "checkpoint_id": "f3dc11db448c",
+  "session_id": "019dc5a6-34a3-7610-a94d-8552f09313dd",
+  "strategy": "manual-commit",
+  "created_at": "2026-04-25T18:13:13.538764Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "app.json",
+    "app/index.tsx",
+    "app/settings.tsx",
+    "bun.lock",
+    "package.json",
+    "services/inference.ts",
+    "store/slices/voice.ts"
+  ],
+  "agent": "Codex",
+  "model": "gpt-5.5",
+  "turn_id": "29cff517dddd",
+  "token_usage": {
+    "input_tokens": 409383,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 3407744,
+    "output_tokens": 26360,
+    "api_call_count": 39
+  },
+  "session_metrics": {
+    "turn_count": 3
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-04-25T18:13:13.516459Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 518,
+    "human_modified": 34,
+    "human_removed": 0,
+    "total_committed": 518,
+    "total_lines_changed": 555,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 914,
+      "user_lines_removed": 9,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "app.json": 29,
+        "app/index.tsx": 135,
+        "app/settings.tsx": 1,
+        "bun.lock": 7,
+        "package.json": 10,
+        "services/voice/audio-recorder.ts": 151,
+        "services/voice/config.ts": 25,
+        "services/voice/gradium-stt.ts": 291,
+        "services/voice/session.ts": 220,
+        "store/slices/voice.ts": 45
+      },
+      "user_removed_per_file": {
+        "app/index.tsx": 5,
+        "app/settings.tsx": 1,
+        "store/slices/voice.ts": 3
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 88,
+      "user_lines_removed": 16,
+      "agent_lines_added": 917,
+      "agent_lines_removed": 31,
+      "user_added_per_file": {
+        "services/inference.ts": 71,
+        "services/voice/gradium-stt.ts": 5,
+        "services/voice/session.ts": 12
+      },
+      "user_removed_per_file": {
+        "services/inference.ts": 9,
+        "services/voice/gradium-stt.ts": 3,
+        "services/voice/session.ts": 4
+      }
+    }
+  ]
+}

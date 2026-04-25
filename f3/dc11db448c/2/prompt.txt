@@ -1,0 +1,9 @@
+You are auditing the Phase 3 Gradium voice path for /Users/alexjay/code/jeffs-brain/phone. Read /Users/alexjay/code/me/big-hack-berlin/plan.md, package.json, store/slices/voice.ts, app/index.tsx, and current env usage without printing secrets. Produce a concrete implementation plan: dependencies, native rebuild needs, Gradium STT/TTS websocket protocol assumptions from docs if needed, store/service shape, UI changes, and fastest safe first slice. Do not edit files.
+
+---
+
+Please inspect the current Gradium STT client/session implementation in /Users/alexjay/code/jeffs-brain/phone, focused on why the app shows a transcript then a Gradium `Message validation error ... (1011)` after using STT. Do not edit files. Return the likely invalid websocket message shape, exact file/lines, and a minimal fix proposal that preserves final transcript -> chat behaviour. Context: latest screenshot shows transcript `Hey, Jeff.` followed by Voice error with Gradium validation error. User wants this robust.
+
+---
+
+Please inspect /Users/alexjay/code/jeffs-brain/phone for the next Phase 3 TTS implementation. Do not edit files. Focus on react-native-audio-api APIs available in node_modules and propose the smallest robust queued PCM playback implementation for 24kHz mono PCM16 base64 chunks from Gradium TTS. Cite exact local files/types/functions if possible. User wants the TTS voice to be male by default because this is Jeff.
