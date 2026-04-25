@@ -15,6 +15,8 @@ type ActiveVoiceTurn = {
 }
 
 let activeTurn: ActiveVoiceTurn | null = null
+let pendingStt: GradiumSttClient | null = null
+let voiceTurnSequence = 0
 
 const normaliseTranscript = (text: string): string => text.replace(/\s+/g, ' ').trim()
 
@@ -110,7 +112,9 @@ export const voiceSession = {
   },
 
   async startTurn(): Promise<void> {
-    if (activeTurn !== null) return
+    if (activeTurn !== null || pendingStt !== null) return
+    const sequence = voiceTurnSequence + 1
+    voiceTurnSequence = sequence
 
     if (!storeApi.get().voiceEnabled) {
       storeApi.get().setVoiceError('Voice is disabled in settings.')
@@ -143,6 +147,7 @@ export const voiceSession = {
     storeApi.get().setVadInactivity(null)
 
     const permission = await voiceRecorder.requestPermission()
+    if (sequence !== voiceTurnSequence) return
     storeApi.get().setMicPermission(permission)
     if (permission !== 'granted') {
       storeApi.get().setVoiceStatus('error')
@@ -154,6 +159,7 @@ export const voiceSession = {
 
     const stt = new GradiumSttClient(GRADIUM_API_KEY, {
       onReady: (message) => {
+        if (pendingStt !== stt && activeTurn?.stt !== stt) return
         storeApi.get().setSttRequestId(message.request_id)
       },
       onText: (text) => {
@@ -171,6 +177,7 @@ export const voiceSession = {
         storeApi.get().setVoiceStatus('transcribing')
       },
       onError: (error) => {
+        if (pendingStt !== stt && activeTurn?.stt !== stt) return
         const turn = activeTurn
         if (turn?.finishing === true) return
         void failTurn(error.message)
@@ -178,9 +185,16 @@ export const voiceSession = {
     })
 
     let subscription: EventSubscription | null = null
+    pendingStt = stt
 
     try {
       await stt.connect()
+      if (sequence !== voiceTurnSequence) {
+        if (pendingStt === stt) pendingStt = null
+        stt.close()
+        await voiceRecorder.stop()
+        return
+      }
       subscription = voiceRecorder.subscribe((frame) => stt.sendAudioBase64(frame))
       const turn: ActiveVoiceTurn = {
         stt,
@@ -190,10 +204,18 @@ export const voiceSession = {
         finishing: false,
       }
       activeTurn = turn
+      pendingStt = null
       await voiceRecorder.start()
       storeApi.get().setRecording(true)
       storeApi.get().setVoiceStatus('listening')
     } catch (error) {
+      if (pendingStt === stt) pendingStt = null
+      if (sequence !== voiceTurnSequence) {
+        subscription?.remove()
+        stt.close()
+        await voiceRecorder.stop()
+        return
+      }
       if (activeTurn?.stt === stt) {
         await cleanupTurn(activeTurn)
       } else {
@@ -211,6 +233,11 @@ export const voiceSession = {
   },
 
   async cancelTurn(): Promise<void> {
+    voiceTurnSequence += 1
+    const pending = pendingStt
+    pendingStt = null
+    pending?.close()
+
     const turn = activeTurn
     if (turn !== null) {
       await cleanupTurn(turn)

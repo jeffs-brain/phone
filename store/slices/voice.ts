@@ -76,7 +76,14 @@ export const createVoiceSlice: Slice<VoiceSlice> = (set) => ({
   },
   speakMessage: async (input) => {
     const { ttsSession } = await import('../../services/voice/tts-session')
-    await ttsSession.speak(input)
+    try {
+      await ttsSession.speak(input)
+    } catch (error) {
+      set({
+        voiceStatus: 'error',
+        voiceError: error instanceof Error ? error.message : 'Voice playback failed.',
+      }, false, 'voice/speakMessageError')
+    }
   },
   stopSpeech: () => {
     void import('../../services/voice/tts-session').then(({ ttsSession }) => {

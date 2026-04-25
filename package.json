@@ -9,6 +9,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "prebuild": "expo prebuild",
+    "check": "bun run typecheck --pretty false && bunx expo-doctor && bunx expo config --type public && git diff --check && bun pm untrusted",
     "typecheck": "tsc --noEmit"
   },
   "op-sqlite": {

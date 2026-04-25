@@ -37,6 +37,7 @@ export type ChatSlice = {
   markThinkingDone: (id: string) => void
   commitStreamingMessage: (id: string, final?: CommitStreamingMessageInput) => void
   appendToolCall: (id: string, toolCall: ToolCall) => void
+  setAssistantRouteDecision: (id: string, routeDecision: RouteDecision) => void
   startNewThread: () => void
   clearMessages: () => void
 }
@@ -233,6 +234,13 @@ export const createChatSlice: Slice<ChatSlice> = (set, get) => ({
         }),
       }
     }, false, 'chat/appendToolCall'),
+
+  setAssistantRouteDecision: (id, routeDecision) =>
+    set((s) => ({
+      messages: s.messages.map((message) =>
+        message.id === id ? { ...message, routeDecision } : message,
+      ),
+    }), false, 'chat/setAssistantRouteDecision'),
 
   startNewThread: () =>
     set({

@@ -18,7 +18,7 @@ const MODEL_OPTIONS: readonly { value: ModelId; label: string; detail: string }[
 const PROVIDER_OPTIONS: readonly { value: ProviderId; label: string; detail: string }[] = [
   { value: 'gemma-local', label: 'Local Gemma', detail: 'Default private path' },
   { value: 'apple-fm', label: 'Apple FM', detail: 'Planned iOS 26 provider' },
-  { value: 'cloud', label: 'Cloud', detail: 'Planned large-tier fallback' },
+  { value: 'cloud', label: 'Cloud', detail: 'OpenAI-compatible large-tier fallback' },
 ]
 
 const BUSY_MODEL_STATUSES: readonly ModelStatus[] = ['checking', 'downloading', 'verifying', 'loaded', 'initialised']

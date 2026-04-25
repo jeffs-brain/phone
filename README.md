@@ -1,6 +1,6 @@
 # Jeff Phone
 
-A React Native iOS app that runs Gemma 4 on-device against a personal memory layer, with voice in/out via Gradium and ai-coustics, and intelligent provider routing via Fastino.
+A React Native iOS app that runs Gemma 4 on-device against a personal memory layer, with voice in/out via Gradium and intelligent provider routing via Fastino.
 
 Built for the **Big Berlin Hack 2026** by [Alex Jay](https://github.com/jaythegeek).
 
@@ -8,7 +8,7 @@ Built for the **Big Berlin Hack 2026** by [Alex Jay](https://github.com/jaythege
 
 ## Status
 
-🚧 **Phase 1 in progress.** Project bootstrapped with Bun, Expo SDK 55, the native dependency set, Zustand slices, Fastino routing, and a local Gemma service path with model download, SHA-256 verification, llama.rn initialisation, multimodal projector loading, and rAF-buffered streaming.
+🚧 **Hackathon build in progress.** Local Gemma chat, vision, memory tools, memory management, Fastino routing, Gradium STT/TTS, and an OpenAI-compatible cloud fallback are wired. Apple Foundation Models, LiveKit/ai-coustics voice v2, EAS project setup, and real-device final validation are still open.
 
 ## The Stack
 
@@ -16,8 +16,8 @@ Built for the **Big Berlin Hack 2026** by [Alex Jay](https://github.com/jaythege
 - **State**: [Zustand](https://zustand.docs.pmnd.rs) (single store, slices pattern)
 - **Local LLM**: [llama.rn](https://github.com/mybigday/llama.rn) 0.12 + Gemma 4 E4B GGUF Q4_K_M
 - **Memory**: [`@jeffs-brain/memory-react-native`](https://github.com/jeffs-brain/memory) (hot-linked from `../memory/sdks/rn/memory`)
-- **Voice**: Gradium STT + TTS (direct WS in v1, LiveKit + Python agent in v2)
-- **Noise removal**: ai-coustics Quail (server-side via LiveKit in v2)
+- **Voice**: Gradium STT + TTS over direct WebSocket
+- **Noise removal**: ai-coustics Quail via LiveKit v2 (planned)
 - **Smart routing**: Fastino Classification TLM (zero-shot)
 - **Alt provider**: Apple Foundation Models via [`react-native-apple-llm`](https://github.com/deveix/react-native-apple-llm)
 
@@ -25,14 +25,14 @@ Built for the **Big Berlin Hack 2026** by [Alex Jay](https://github.com/jaythege
 
 ```
 phone/
-├── app/                 # expo-router screens (single-screen voice-first UI)
+  ├── app/                 # expo-router screens
 ├── store/               # Zustand store
 │   ├── index.ts         # Combined store with slices + middleware
 │   ├── selectors.ts     # Atomic selectors
 │   ├── types.ts         # Shared types
 │   └── slices/          # inference, chat, voice, memory, routing, settings
 ├── services/            # Native bridges and external APIs
-│   ├── inference.ts     # llama.rn adapter (token streaming via ref-buffer)
+│   ├── inference.ts     # llama.rn adapter, tool loop, cloud fallback
 │   └── router.ts        # Fastino classifier call
 ├── lib/                 # Shared constants and helpers
 ├── app.json             # Expo config — bundle id, plugins, entitlements

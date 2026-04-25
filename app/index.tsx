@@ -88,7 +88,6 @@ const VOICE_BUSY_STATUSES: readonly VoiceStatus[] = [
   'ending-turn',
   'transcribing',
   'sending',
-  'speaking',
 ]
 
 const MODEL_LABELS = {
@@ -708,6 +707,7 @@ export default function Chat() {
   const startRecording = useStore((s) => s.startRecording)
   const stopRecording = useStore((s) => s.stopRecording)
   const cancelVoice = useStore((s) => s.cancelVoice)
+  const stopSpeech = useStore((s) => s.stopSpeech)
 
   const generationActive = isGenerationActive(generationStatus)
   const voiceBusy = VOICE_BUSY_STATUSES.includes(voiceStatus)
@@ -752,10 +752,11 @@ export default function Chat() {
     if (!canSend) return
     hapticSend()
     setActionError(null)
+    if (voiceStatus === 'speaking') stopSpeech()
     void sendUserMessage().catch(() => {
       setActionError('Could not send that message.')
     })
-  }, [canSend, sendUserMessage])
+  }, [canSend, sendUserMessage, stopSpeech, voiceStatus])
 
   const handleSuggestion = useCallback((text: string) => {
     setDraft(text)

@@ -31,6 +31,8 @@ export const ttsSession = {
     if (text === '') return
 
     if (GRADIUM_API_KEY === undefined || GRADIUM_API_KEY.trim() === '') {
+      storeApi.get().setVoiceStatus('error')
+      storeApi.get().setVoiceError('Gradium API key is missing.')
       throw new Error('Gradium API key is missing.')
     }
 

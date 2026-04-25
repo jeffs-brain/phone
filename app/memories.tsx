@@ -261,6 +261,10 @@ export default function Memories() {
     void memoryService.listMemories()
   }, [])
 
+  const handleTidy = useCallback(() => {
+    void memoryService.consolidateMemories()
+  }, [])
+
   const handleToggle = useCallback((path: string) => {
     setExpandedPath((current) => current === path ? null : path)
   }, [])
@@ -309,6 +313,7 @@ export default function Memories() {
 
       <View style={styles.actionRow}>
         <HeaderButton label={loading ? '🔄 Refreshing' : '🔄 Refresh'} onPress={handleRefresh} muted disabled={loading} />
+        <HeaderButton label="🧹 Tidy" onPress={handleTidy} muted disabled={loading || memoryNotes.length < 2} />
       </View>
 
       {lastExtractionSummary === null ? null : (

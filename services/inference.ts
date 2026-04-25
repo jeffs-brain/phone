@@ -10,6 +10,8 @@ import {
 } from 'llama.rn'
 import type {
   ContentBlock as SdkContentBlock,
+  CompletionRequest as SdkCompletionRequest,
+  CompletionResponse as SdkCompletionResponse,
   Message as SdkMessage,
   StructuredRequest as SdkStructuredRequest,
 } from '@jeffs-brain/memory-react-native'
@@ -19,6 +21,7 @@ import { createId } from '../lib/id'
 import { storeApi } from '../store'
 import type { ModelId } from '../store/slices/inference'
 import type { ContentPart, Message, ProviderId } from '../store/types'
+import { cloudProviderService } from './cloud-provider'
 import { MEMORY_TOOL_DEFINITIONS, MemoryToolArgumentError, memoryService } from './memory'
 import { ensureModelFile, ensureProjectorFile } from './model-assets'
 import { clearRuntimeMarker, isSimulatorMultimodalGpuAutoDisabled, writeRuntimeMarker } from './runtime-marker'
@@ -51,6 +54,7 @@ type LoadInFlight = {
 
 type CompletionRequest = Awaited<ReturnType<LlamaContext['parallel']['completion']>>
 type CompletionTokenHandler = NonNullable<Parameters<LlamaContext['parallel']['completion']>[1]>
+type SdkSystemPromptRequest = Pick<SdkCompletionRequest, 'systemStatic' | 'systemDynamic' | 'system'>
 
 type LlamaAssistantToolCallMessage = RNLlamaOAICompatibleMessage & {
   readonly role: 'assistant'
@@ -74,9 +78,14 @@ type PreparedToolCall = {
   readonly argumentError?: string
 }
 
+type MemoryToolExecutionSummary = {
+  readonly name: string
+  readonly status: 'done' | 'error'
+}
+
 type GenerationOutcome = {
   readonly result: NativeCompletionResult
-  readonly memoryToolNames: readonly string[]
+  readonly memoryToolExecutions: readonly MemoryToolExecutionSummary[]
 }
 
 let loaded: LoadedContext | null = null
@@ -88,6 +97,12 @@ const SIMULATOR_VISION_DISABLED_MESSAGE = [
   'I can attach and preview that image, but this simulator profile is running text-only Gemma.',
   'Remove EXPO_PUBLIC_SIMULATOR_VISION=disabled to run the local vision projector in iOS Simulator.',
 ].join(' ')
+const CLOUD_SYSTEM_PROMPT = [
+  'You are Jeff, a private assistant for the person using this app.',
+  'Be direct, useful, and concise.',
+  'This response is being produced by the selected cloud provider, so do not claim that this specific answer ran on-device.',
+  'You do not have direct access to the phone memory tools in this cloud turn unless memory text appears in the prompt.',
+].join('\n')
 
 const scheduleFrame = (callback: () => void): number => {
   if (typeof requestAnimationFrame === 'function') {
@@ -194,6 +209,15 @@ const mediaPlaceholder = (parts: readonly ContentPart[]): string | null => {
   if (hasImage && hasAudio) return '[Image and audio attachments omitted on this simulator profile.]'
   if (hasImage) return '[Image attachment omitted on this simulator profile.]'
   return '[Audio attachment omitted on this simulator profile.]'
+}
+
+const cloudMediaPlaceholder = (parts: readonly ContentPart[]): string | null => {
+  const hasImage = parts.some((part) => part.type === 'image')
+  const hasAudio = parts.some((part) => part.type === 'audio')
+  if (!hasImage && !hasAudio) return null
+  if (hasImage && hasAudio) return '[Image and audio attachments were not sent to the cloud provider.]'
+  if (hasImage) return '[Image attachment was not sent to the cloud provider.]'
+  return '[Audio attachment was not sent to the cloud provider.]'
 }
 
 const toLlamaContent = (
@@ -303,6 +327,25 @@ const buildMessages = (activeAssistantId: string, includeMedia: boolean): RNLlam
   return [{ role: 'system', content: SYSTEM_PROMPT }, ...historical]
 }
 
+const toCloudMessage = (message: Message): SdkMessage | null => {
+  if (message.role === 'tool') return null
+  const text = textFromParts(message.parts).trim()
+  const placeholder = cloudMediaPlaceholder(message.parts)
+  const content = [text, placeholder]
+    .filter((part): part is string => part !== null && part !== '')
+    .join('\n\n')
+  if (content === '') return null
+  return { role: message.role, content }
+}
+
+const buildCloudMessages = (activeAssistantId: string): SdkMessage[] =>
+  storeApi
+    .get()
+    .messages
+    .filter((message) => message.id !== activeAssistantId)
+    .map(toCloudMessage)
+    .filter((message): message is SdkMessage => message !== null)
+
 const buildCompletionParams = (
   messageId: string,
   includeMedia: boolean,
@@ -342,11 +385,13 @@ const shouldExtractTurnMemory = (
   userText: string,
   assistantText: string,
   includeMedia: boolean,
-  memoryToolNames: readonly string[],
+  memoryToolExecutions: readonly MemoryToolExecutionSummary[],
 ): boolean =>
   storeApi.get().rememberConversation
     && !includeMedia
-    && memoryToolNames.length === 0
+    && !memoryToolExecutions.some((tool) =>
+      tool.status === 'done' && (tool.name === 'memory_remember' || tool.name === 'memory_forget'),
+    )
     && userText.trim() !== ''
     && assistantText.trim() !== ''
 
@@ -370,7 +415,7 @@ const toStructuredLlamaMessage = (message: SdkMessage): RNLlamaOAICompatibleMess
   }
 }
 
-const structuredSystemMessages = (request: SdkStructuredRequest): RNLlamaOAICompatibleMessage[] =>
+const structuredSystemMessages = (request: SdkSystemPromptRequest): RNLlamaOAICompatibleMessage[] =>
   [request.systemStatic, request.systemDynamic, request.system]
     .filter((message): message is string => typeof message === 'string' && message.trim() !== '')
     .map((content) => ({ role: 'system', content }))
@@ -433,15 +478,53 @@ const structuredMemoryCompletion = async (
   return normaliseCompletionContent(result.content)
 }
 
+const memoryCompletion = async (
+  request: SdkCompletionRequest,
+  signal?: AbortSignal,
+): Promise<SdkCompletionResponse> => {
+  const messages = [
+    ...structuredSystemMessages(request),
+    ...request.messages
+      .map(toStructuredLlamaMessage)
+      .filter((message): message is RNLlamaOAICompatibleMessage => message !== null),
+  ]
+
+  const result = await completeWithLoadedContext(
+    signal ?? new AbortController().signal,
+    {
+      messages,
+      n_threads: INFERENCE_CONFIG.N_THREADS,
+      n_predict: request.maxTokens ?? 512,
+      stop: [...GEMMA_STOPS],
+      jinja: true,
+      enable_thinking: false,
+      reasoning_format: 'none',
+      temperature: request.temperature ?? 0,
+      force_pure_content: true,
+      parallel_tool_calls: false as unknown as object,
+    },
+  )
+
+  return {
+    content: normaliseCompletionContent(result.content),
+    toolCalls: [],
+    usage: {
+      inputTokens: 0,
+      outputTokens: 0,
+    },
+    stopReason: '',
+  }
+}
+
 const extractTurnMemory = async (
   messageId: string,
   userText: string,
   assistantText: string,
   includeMedia: boolean,
-  memoryToolNames: readonly string[],
+  memoryToolExecutions: readonly MemoryToolExecutionSummary[],
   signal: AbortSignal,
 ): Promise<void> => {
-  if (!shouldExtractTurnMemory(userText, assistantText, includeMedia, memoryToolNames)) return
+  if (!shouldExtractTurnMemory(userText, assistantText, includeMedia, memoryToolExecutions)) return
   if (signal.aborted) return
   storeApi.get()._setGenerationStatus('using-tools')
   await memoryService.extractTurn({
@@ -559,11 +642,15 @@ const toolErrorContent = (name: string, message: string, retryable: boolean): st
 const runMemoryToolCalls = async (
   messageId: string,
   toolCalls: readonly PreparedToolCall[],
-): Promise<readonly LlamaToolResultMessage[]> => {
-  if (toolCalls.length === 0) return []
+): Promise<{
+  readonly messages: readonly LlamaToolResultMessage[]
+  readonly executions: readonly MemoryToolExecutionSummary[]
+}> => {
+  if (toolCalls.length === 0) return { messages: [], executions: [] }
 
   storeApi.get()._setGenerationStatus('using-tools')
   const results: LlamaToolResultMessage[] = []
+  const executions: MemoryToolExecutionSummary[] = []
 
   for (const prepared of toolCalls) {
     const call = prepared.call
@@ -583,6 +670,7 @@ const runMemoryToolCalls = async (
         status: 'done',
         result: execution.result,
       })
+      executions.push({ name, status: 'done' })
       results.push({
         role: 'tool',
         tool_call_id: id,
@@ -601,6 +689,7 @@ const runMemoryToolCalls = async (
           error: message,
         })
       }
+      executions.push({ name, status: 'error' })
       results.push({
         role: 'tool',
         tool_call_id: id,
@@ -610,7 +699,7 @@ const runMemoryToolCalls = async (
     }
   }
 
-  return results
+  return { messages: results, executions }
 }
 
 type TokenStreamActivity = 'content' | 'thinking' | 'none'
@@ -813,7 +902,7 @@ const generateWithMemoryTools = async (
   throwIfAborted(signal)
 
   let messages = buildMessages(messageId, false)
-  const memoryToolNames: string[] = []
+  const memoryToolExecutions: MemoryToolExecutionSummary[] = []
   let result = await completeWithLoadedContext(
     signal,
     buildCompletionParams(messageId, false, messages, true),
@@ -825,12 +914,12 @@ const generateWithMemoryTools = async (
     if (preparedToolCalls.length === 0) break
 
     const assistantToolCalls = preparedToolCalls.map((prepared) => prepared.call)
-    memoryToolNames.push(...assistantToolCalls.map((call) => call.function.name))
-    const toolResultMessages = await runMemoryToolCalls(messageId, preparedToolCalls)
+    const toolResult = await runMemoryToolCalls(messageId, preparedToolCalls)
+    memoryToolExecutions.push(...toolResult.executions)
     messages = [
       ...messages,
       toolChoiceMessage(normaliseCompletionContent(result.content), assistantToolCalls),
-      ...toolResultMessages,
+      ...toolResult.messages,
     ]
 
     const allowMoreTools = round + 1 < TOOL_LIMITS.MAX_ROUNDS
@@ -847,11 +936,50 @@ const generateWithMemoryTools = async (
     buildCompletionParams(messageId, false, messages, false),
     streamingTokenHandler(messageId),
   )
-  return { result: finalResult, memoryToolNames }
+  return { result: finalResult, memoryToolExecutions }
+}
+
+const cloudCompletionResult = (content: string): NativeCompletionResult =>
+  ({ content, reasoning_content: '' }) as NativeCompletionResult
+
+const generateWithCloud = async (
+  messageId: string,
+  signal: AbortSignal,
+): Promise<GenerationOutcome> => {
+  throwIfAborted(signal)
+  const response = await cloudProviderService.complete(
+    buildCloudMessages(messageId),
+    CLOUD_SYSTEM_PROMPT,
+    signal,
+  )
+  const content = response.content.trim() || 'Cloud provider returned an empty response.'
+  storeApi.get()._setGenerationStatus('streaming')
+  appendBuffered(messageId, content)
+  return {
+    result: cloudCompletionResult(content),
+    memoryToolExecutions: [],
+  }
+}
+
+const markProviderFallback = (
+  messageId: string,
+  requestedProvider: ProviderId,
+  reason: string,
+): void => {
+  const current = storeApi.get().messages.find((message) => message.id === messageId)?.routeDecision
+  if (current === undefined) return
+  storeApi.get().setAssistantRouteDecision(messageId, {
+    ...current,
+    provider: 'gemma-local',
+    tier: 'medium',
+    label: `fallback:${requestedProvider}-${reason}`,
+    confidence: 0,
+    routed: false,
+  })
 }
 
 const loadModelInternal = async (id: ModelId): Promise<void> => {
-  if (loaded?.id === id) return
+  if (loaded?.id === id && storeApi.get().modelStatus === 'ready') return
 
   const state = storeApi.get()
   state._setModelId(id)
@@ -908,7 +1036,7 @@ const loadModelInternal = async (id: ModelId): Promise<void> => {
 }
 
 const loadModelOnce = async (id: ModelId): Promise<void> => {
-  if (loaded?.id === id) return
+  if (loaded?.id === id && storeApi.get().modelStatus === 'ready') return
   if (loadInFlight?.id === id) return loadInFlight.promise
   if (loadInFlight !== null) await loadInFlight.promise.catch(() => undefined)
 
@@ -920,6 +1048,7 @@ const loadModelOnce = async (id: ModelId): Promise<void> => {
   return promise
 }
 
+memoryService.setCompletionProvider(memoryCompletion)
 memoryService.setStructuredProvider(structuredMemoryCompletion)
 
 export const inferenceService = {
@@ -945,14 +1074,37 @@ export const inferenceService = {
       const userText = latestUserText()
       throwIfAborted(opts.signal)
 
-      if (opts.provider !== 'gemma-local') {
-        appendBuffered(
+      const turnRequiresMedia = latestUserRequiresMultimodal()
+
+      if (opts.provider === 'cloud' && cloudProviderService.isConfigured()) {
+        const outcome = await generateWithCloud(opts.messageId, opts.signal)
+        const content = normaliseCompletionContent(outcome.result.content)
+        const thinking = normaliseCompletionThinking(outcome.result.reasoning_content)
+        finishStream(opts.messageId)
+        state.commitStreamingMessage(opts.messageId, {
+          content,
+          thinking,
+        })
+        await extractTurnMemory(
           opts.messageId,
-          'That provider is not installed in this build yet, so I am answering with local Gemma.',
+          userText,
+          content,
+          turnRequiresMedia,
+          outcome.memoryToolExecutions,
+          opts.signal,
+        )
+        state._setGenerationStatus('done')
+        return
+      }
+
+      if (opts.provider !== 'gemma-local') {
+        markProviderFallback(
+          opts.messageId,
+          opts.provider,
+          opts.provider === 'cloud' ? 'unconfigured' : 'unavailable',
         )
       }
 
-      const turnRequiresMedia = latestUserRequiresMultimodal()
       const includeMedia = INFERENCE_CONFIG.MULTIMODAL_GENERATION_ENABLED && turnRequiresMedia
       if (turnRequiresMedia && !includeMedia) {
         appendBuffered(opts.messageId, SIMULATOR_VISION_DISABLED_MESSAGE)
@@ -975,7 +1127,7 @@ export const inferenceService = {
         ? await generateWithMemoryTools(opts.messageId, opts.signal)
         : {
             result: await generateWithLoadedContext(opts.messageId, opts.signal, includeMedia),
-            memoryToolNames: [],
+            memoryToolExecutions: [],
           }
       const result = outcome.result
       const content = normaliseCompletionContent(result.content)
@@ -985,7 +1137,14 @@ export const inferenceService = {
         content,
         thinking,
       })
-      await extractTurnMemory(opts.messageId, userText, content, includeMedia, outcome.memoryToolNames, opts.signal)
+      await extractTurnMemory(
+        opts.messageId,
+        userText,
+        content,
+        includeMedia,
+        outcome.memoryToolExecutions,
+        opts.signal,
+      )
       state._setGenerationStatus('done')
     } catch (error) {
       finishStream(opts.messageId)

@@ -42,6 +42,7 @@ type MemoryToolExecution = {
   readonly result: unknown
 }
 
+type CompletionProviderHandler = (request: SdkCompletionRequest, signal?: AbortSignal) => Promise<SdkCompletionResponse>
 type StructuredProviderHandler = (request: SdkStructuredRequest, signal?: AbortSignal) => Promise<string>
 
 type ExtractTurnOptions = {
@@ -62,14 +63,18 @@ export class MemoryToolArgumentError extends Error {
 
 let memoryClient: MemoryClient | null = null
 let memoryClientInFlight: Promise<MemoryClient> | null = null
+let completionProviderHandler: CompletionProviderHandler | null = null
 let structuredProviderHandler: StructuredProviderHandler | null = null
 
 const memoryExtractionProvider: Provider = {
   name: () => 'local-gemma-memory',
   modelName: () => 'gemma-4-local',
   supportsStructuredDecoding: () => true,
-  complete: async (_request: SdkCompletionRequest): Promise<SdkCompletionResponse> => {
-    throw new Error('Memory extraction provider only supports structured requests.')
+  complete: async (request: SdkCompletionRequest, signal): Promise<SdkCompletionResponse> => {
+    if (completionProviderHandler === null) {
+      throw new Error('Memory completion provider has not been initialised.')
+    }
+    return completionProviderHandler(request, signal)
   },
   structured: async (request, signal) => {
     if (structuredProviderHandler === null) {
@@ -268,6 +273,14 @@ const filenameFromManagedPath = async (client: MemoryClient, rawPath: string): P
   return path.slice(MANAGED_MEMORY_PATH_PREFIX.length)
 }
 
+const noteFromManagedPath = async (client: MemoryClient, rawPath: string): Promise<StoredMemoryNote> => {
+  const path = await resolveManagedMemoryPath(client, rawPath)
+  const notes = await client.listNotes({ scope: DEFAULT_SCOPE, actorId: MEMORY_ACTOR_ID })
+  const note = notes.find((candidate) => String(candidate.path) === path)
+  if (note === undefined) throw new Error('Memory note was not found on this phone.')
+  return note
+}
+
 const rememberMemory = async (
   memory: string,
   name?: string,
@@ -283,7 +296,7 @@ const rememberMemory = async (
     indexEntry: memory,
     scope: DEFAULT_SCOPE,
     actorId: MEMORY_ACTOR_ID,
-    tags: [...(tags ?? []), 'chat'],
+    tags: [...new Set([...(tags ?? []), 'chat'])],
   })
   return note.name
 }
@@ -292,6 +305,20 @@ const extractionSummary = (result: ExtractResult): string => {
   if (result.skipped) return `Memory extraction skipped: ${result.reason ?? 'no durable memories found'}`
   if (result.created.length === 0) return 'No new durable memories found'
   return `Saved ${result.created.length} memor${result.created.length === 1 ? 'y' : 'ies'}`
+}
+
+const consolidationSummary = (report: {
+  readonly merged: number
+  readonly deleted: number
+  readonly promoted: number
+  readonly errors: readonly string[]
+}): string => {
+  const changes = report.merged + report.deleted + report.promoted
+  if (report.errors.length > 0 && changes === 0) {
+    return `Memory tidy failed: ${report.errors[0] ?? 'unknown error'}`
+  }
+  if (changes === 0) return 'Memory tidy complete: no duplicates found'
+  return `Memory tidy complete: ${report.merged} merged, ${report.deleted} deleted, ${report.promoted} promoted`
 }
 
 export const MEMORY_TOOL_DEFINITIONS = [
@@ -401,6 +428,10 @@ const getMemoryClient = async (): Promise<MemoryClient> => {
 }
 
 export const memoryService = {
+  setCompletionProvider(handler: CompletionProviderHandler): void {
+    completionProviderHandler = handler
+  },
+
   setStructuredProvider(handler: StructuredProviderHandler): void {
     structuredProviderHandler = handler
   },
@@ -481,6 +512,27 @@ export const memoryService = {
     }
   },
 
+  async consolidateMemories(): Promise<void> {
+    const store = storeApi.get()
+    store.setMemoryNotesStatus('loading')
+    store.setMemoryNotesError(null)
+    appendMemoryLog('memory_consolidate', 'running')
+
+    try {
+      const client = await getMemoryClient()
+      const report = await client.consolidate({ scope: DEFAULT_SCOPE, actorId: MEMORY_ACTOR_ID })
+      const summary = consolidationSummary(report)
+      storeApi.get().setLastExtraction(summary)
+      await refreshMemoryNotesAfterWrite(client)
+      appendMemoryLog('memory_consolidate', 'done', summary)
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      updateMemoryNotesError(detail)
+      storeApi.get().setLastExtraction(`Memory tidy failed: ${detail}`)
+      appendMemoryLog('memory_consolidate', 'error', detail)
+    }
+  },
+
   async runTool(name: string, rawArgs: unknown): Promise<MemoryToolExecution> {
     if (!isMemoryToolName(name)) {
       throw new Error(`Unsupported memory tool: ${name}`)
@@ -498,6 +550,7 @@ export const memoryService = {
         topK,
         scope: DEFAULT_SCOPE,
         actorId: MEMORY_ACTOR_ID,
+        selector: 'auto',
       })).map(toRecallHit)
       storeApi.get().setRecentRecall(hits)
       const content = recallSummary(hits)
@@ -524,10 +577,14 @@ export const memoryService = {
       const tags = optionalStringArrayArg(args, 'tags')
       const client = await getMemoryClient()
       const path = optionalStringArg(args, 'path')
-      const filename = path === undefined
+      const existingNote = path === undefined ? undefined : await noteFromManagedPath(client, path)
+      const filename = existingNote === undefined
         ? optionalStringArg(args, 'filename')
-        : await filenameFromManagedPath(client, path)
-      const noteName = await rememberMemory(content, title, tags, filename)
+        : await filenameFromManagedPath(client, String(existingNote.path))
+      const mergedTags = existingNote === undefined
+        ? tags
+        : [...new Set([...existingNote.tags, ...(tags ?? [])])]
+      const noteName = await rememberMemory(content, title ?? existingNote?.name, mergedTags, filename)
       const message = `Remembered: ${noteName}`
       storeApi.get().setLastExtraction(message)
       await refreshMemoryNotesAfterWrite(client)
