@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.5.6",
+  "checkpoint_id": "1e624687b28d",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    ".env.example",
+    "README.md",
+    "app/index.tsx",
+    "app/memories.tsx",
+    "app/settings.tsx",
+    "package.json",
+    "services/cloud-provider.ts",
+    "services/inference.ts",
+    "services/memory.ts",
+    "services/voice/session.ts",
+    "services/voice/tts-session.ts",
+    "store/slices/chat.ts",
+    "store/slices/voice.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/1e/624687b28d/0/metadata.json",
+      "transcript": "/1e/624687b28d/0/full.jsonl",
+      "content_hash": "/1e/624687b28d/0/content_hash.txt",
+      "prompt": "/1e/624687b28d/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 687342,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 11706240,
+    "output_tokens": 30613,
+    "api_call_count": 90
+  }
+}
