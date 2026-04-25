@@ -1,0 +1,50 @@
+{
+  "cli_version": "0.5.6",
+  "checkpoint_id": "b5df3e54e8b8",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 4,
+  "files_touched": [
+    ".env.example",
+    ".gitignore",
+    "README.md",
+    "app.json",
+    "app/_layout.tsx",
+    "app/index.tsx",
+    "app/settings.tsx",
+    "babel.config.js",
+    "bun.lock",
+    "eas.json",
+    "global.css",
+    "lib/constants.ts",
+    "lib/id.ts",
+    "metro.config.js",
+    "nativewind-env.d.ts",
+    "package.json",
+    "services/inference.ts",
+    "services/model-assets.ts",
+    "services/router.ts",
+    "store/index.ts",
+    "store/slices/chat.ts",
+    "store/slices/inference.ts",
+    "store/slices/voice.ts",
+    "store/types.ts",
+    "tailwind.config.js",
+    "tsconfig.json"
+  ],
+  "sessions": [
+    {
+      "metadata": "/b5/df3e54e8b8/0/metadata.json",
+      "transcript": "/b5/df3e54e8b8/0/full.jsonl",
+      "content_hash": "/b5/df3e54e8b8/0/content_hash.txt",
+      "prompt": "/b5/df3e54e8b8/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 1305754,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 34905984,
+    "output_tokens": 120625,
+    "api_call_count": 350
+  }
+}

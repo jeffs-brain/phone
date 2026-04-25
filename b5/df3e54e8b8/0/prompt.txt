@@ -1,0 +1,29 @@
+/Users/alexjay/code/me/big-hack-berlin/plan.md i want you to pick up this plan, analyse and explore what has been done so far on the repo. fix any mistakes or missing bits, then lets pickup the plan of action where we left off. use multiple subagents to work through it. parallelise where possible.
+
+---
+
+i wanna use bun if possible, if not then npm
+
+---
+
+ok, lets open it up in xcode, then lets spin it up on the simulator
+
+---
+
+i have set the simulator from the target menu as the iphone 17 pro max sim instead of my actual phone. wanna get it working on there first
+
+---
+
+[Image #1]
+
+---
+
+/Users/alexjay/Desktop/Screenshot\ 2026-04-25\ at\ 15.52.06.png /Users/alexjay/Desktop/Screenshot\ 2026-04-25\ at\ 15.51.35.png /Users/alexjay/Desktop/Screenshot\ 2026-04-25\ at\ 15.51.15.png awesome, looks like it is downloading the model, now something we want to avoid is having to keep re-downloading the model each time the app gets opened or whatever, how can we manage that?
+
+---
+
+understood. it has downloaded the model to the device now so lets continue making the changes needed to ensure this is robust. but i think it failed like 100 mb before the end
+
+---
+
+or maybe the app itself has crashed
