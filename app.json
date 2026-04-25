@@ -1,0 +1,61 @@
+{
+  "expo": {
+    "name": "Jeff Phone",
+    "slug": "jeff-phone",
+    "version": "0.0.1",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "scheme": "jeff",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0a0a0f"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ai.jeffsbrain.phone",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Jeff uses selected images so the local model can answer questions about them.",
+        "NSMicrophoneUsageDescription": "Jeff uses the microphone for voice chat with the on-device model.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "ai.jeffsbrain.phone",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0a0a0f"
+      },
+      "edgeToEdgeEnabled": true
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      [
+        "llama.rn",
+        {
+          "enableEntitlements": true,
+          "entitlementsProfile": ["production", "preview", "development"],
+          "forceCxx20": true,
+          "enableOpenCLAndHexagon": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Jeff uses selected images so the local model can answer questions about them."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "15.1"
+          }
+        }
+      ]
+    ]
+  }
+}
