@@ -1,0 +1,17 @@
+lets go
+
+---
+
+[Image #1] getting an issue here when asking it to remember
+
+---
+
+[Image #1] when ising gradium stt - i see it actually transcribe but then we get an error
+
+---
+
+also for the tts model it should be male as it is jeff :joy:
+
+---
+
+[Image #1] memory recall sort of seems to work, but then fails on actually seeing the response by the looks of it. we need to look at this properly and make it robust
