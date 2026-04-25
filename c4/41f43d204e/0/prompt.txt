@@ -1,0 +1,61 @@
+i would like to get it working with GPU on the simulator if possible. can we do some research on how to get that working properly? i would also like to pick up phase 2. use multiple subagents to accomplish this. be clean, thorough and precise.
+
+---
+
+if we cannot get it working on simulator then we need to try on real iphone, it is plugged in. we can use the E2B one which should be ok with the mem limit right?
+
+---
+
+expo opened but the dev server aint showing up
+
+---
+
+can we not use localhost?
+
+---
+
+i am sharing the wifi from my phone to the macbook
+
+---
+
+i also have it plugged in via usb
+
+---
+
+yeah i see it, it is downloading the model
+
+---
+
+[Image #1] [Image #2] [Image #3] [Image #4] ok so we have a bit of an issue with the memory stuff, it is not using recall properly and also not calling the approrpiate tool to remember. what is happening here? the extraction also shows as failed but it is not, clearly because there are extracted conversation memories there.
+
+---
+
+i think we need to add in a toggle in settings for turning thinking on or off, it really makes it slow, or maybe we are not correctly using the GPU on device. hard to know because the settings is unclear as to what is being used, lot of mention of simulator throughout. it should all be accurate. fix it up and ensure we are actually using the gpu on device
+
+---
+
+ok reboot it on the device then lets give it a whirl
+
+---
+
+[Image #1] the recall shows there is a result, which is correct, and it is using the tool which is great, hwoever it is not seeing the content or something as it responds af it doesnt
+
+---
+
+also it crashed when trying to ask it what is in an image.
+
+---
+
+yes but the problem i was actually describing was not with the correct image, but yes there is an image issue. fix that too. but the original problem is asking about something that is in the memories, it runs the tool call correctly and shows that it returned a result but still responds as if it does not know the memory is in the tool call response
+
+---
+
+just suck on preparing vision for ages - i dont get why it is not working with the gpu when the normal model does, they are one and the same no?
+
+---
+
+ok so we may not be able to add it for that device, but we can add it for my ipad no? i have enabled developer mode and plugged it in... i really wanna demo this the best i can
+
+---
+
+getting a could not connect to the dev server

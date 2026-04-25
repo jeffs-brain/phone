@@ -1,0 +1,51 @@
+{
+  "cli_version": "0.5.6",
+  "checkpoint_id": "c441f43d204e",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "app/_layout.tsx",
+    "app/index.tsx",
+    "app/memories.tsx",
+    "app/settings.tsx",
+    "bun.lock",
+    "components/chat/chat-composer.tsx",
+    "components/chat/chat-message-list.tsx",
+    "components/chat/message-bubble.tsx",
+    "components/chat/model-status-banner.tsx",
+    "components/chat/staged-attachment-tray.tsx",
+    "components/chat/styles.ts",
+    "components/settings/sections.tsx",
+    "lib/chat/attachment-helpers.ts",
+    "lib/chat/message-helpers.ts",
+    "lib/chat/status-helpers.ts",
+    "lib/constants.ts",
+    "lib/settings/copy.ts",
+    "package.json",
+    "services/inference-messages.ts",
+    "services/inference.ts",
+    "services/memory.ts",
+    "services/runtime-marker.ts",
+    "store/index.ts",
+    "store/slices/chat.ts",
+    "store/slices/memory.ts",
+    "store/slices/settings.ts",
+    "store/types.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/c4/41f43d204e/0/metadata.json",
+      "transcript": "/c4/41f43d204e/0/full.jsonl",
+      "content_hash": "/c4/41f43d204e/0/content_hash.txt",
+      "prompt": "/c4/41f43d204e/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 2738235,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 35779712,
+    "output_tokens": 100726,
+    "api_call_count": 291
+  }
+}
