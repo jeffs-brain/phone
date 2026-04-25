@@ -1,0 +1,56 @@
+{
+  "cli_version": "0.5.6",
+  "checkpoint_id": "2dca63194c95",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "README.md",
+    "app.json",
+    "app/index.tsx",
+    "app/memories.tsx",
+    "app/settings.tsx",
+    "components/chat/chat-composer.tsx",
+    "components/chat/chat-header.tsx",
+    "components/chat/chat-message-list.tsx",
+    "components/chat/empty-state.tsx",
+    "components/chat/glass-surface.tsx",
+    "components/chat/message-bubble.tsx",
+    "components/chat/model-status-banner.tsx",
+    "components/chat/staged-attachment-tray.tsx",
+    "components/chat/styles.ts",
+    "components/chat/thinking-disclosure.tsx",
+    "components/chat/voice-tray.tsx",
+    "components/memory/MemoryButtons.tsx",
+    "components/memory/MemoryNoteCard.tsx",
+    "components/memory/ToolLogRow.tsx",
+    "components/settings/controls.tsx",
+    "components/settings/index.ts",
+    "components/settings/sections.tsx",
+    "components/settings/settings-styles.ts",
+    "lib/chat/attachment-helpers.ts",
+    "lib/chat/message-helpers.ts",
+    "lib/chat/status-helpers.ts",
+    "lib/memory-display.ts",
+    "lib/settings/copy.ts",
+    "services/inference-messages.ts",
+    "services/inference-stream.ts",
+    "services/inference.ts",
+    "services/voice/tts-session.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/2d/ca63194c95/0/metadata.json",
+      "transcript": "/2d/ca63194c95/0/full.jsonl",
+      "content_hash": "/2d/ca63194c95/0/content_hash.txt",
+      "prompt": "/2d/ca63194c95/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 779040,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 10238720,
+    "output_tokens": 36834,
+    "api_call_count": 93
+  }
+}
