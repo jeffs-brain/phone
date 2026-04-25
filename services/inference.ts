@@ -6,15 +6,22 @@ import {
   type RNLlamaMessagePart,
   type RNLlamaOAICompatibleMessage,
   type TokenData,
+  type ToolCall as LlamaToolCall,
 } from 'llama.rn'
+import type {
+  ContentBlock as SdkContentBlock,
+  Message as SdkMessage,
+  StructuredRequest as SdkStructuredRequest,
+} from '@jeffs-brain/memory-react-native'
 
-import { GEMMA_STOPS, INFERENCE_CONFIG, MEMORY_PRECONTEXT, STREAMING, SYSTEM_PROMPT } from '../lib/constants'
+import { GEMMA_STOPS, INFERENCE_CONFIG, MEMORY_PRECONTEXT, STREAMING, SYSTEM_PROMPT, TOOL_LIMITS } from '../lib/constants'
+import { createId } from '../lib/id'
 import { storeApi } from '../store'
 import type { ModelId } from '../store/slices/inference'
 import type { ContentPart, Message, ProviderId } from '../store/types'
-import { memoryService } from './memory'
+import { MEMORY_TOOL_DEFINITIONS, memoryService } from './memory'
 import { ensureModelFile, ensureProjectorFile } from './model-assets'
-import { clearRuntimeMarker, writeRuntimeMarker } from './runtime-marker'
+import { clearRuntimeMarker, isSimulatorMultimodalGpuAutoDisabled, writeRuntimeMarker } from './runtime-marker'
 
 type LoadedContext = {
   readonly id: ModelId
@@ -43,6 +50,19 @@ type LoadInFlight = {
 }
 
 type CompletionRequest = Awaited<ReturnType<LlamaContext['parallel']['completion']>>
+type CompletionTokenHandler = NonNullable<Parameters<LlamaContext['parallel']['completion']>[1]>
+
+type LlamaAssistantToolCallMessage = RNLlamaOAICompatibleMessage & {
+  readonly role: 'assistant'
+  readonly tool_calls: readonly LlamaToolCall[]
+}
+
+type LlamaToolResultMessage = RNLlamaOAICompatibleMessage & {
+  readonly role: 'tool'
+  readonly tool_call_id: string
+  readonly name?: string
+  readonly content: string
+}
 
 let loaded: LoadedContext | null = null
 let loadInFlight: LoadInFlight | null = null
@@ -279,10 +299,15 @@ const buildMessages = (activeAssistantId: string, includeMedia: boolean): RNLlam
   return [{ role: 'system', content: buildSystemPrompt() }, ...historical]
 }
 
-const buildCompletionParams = (messageId: string, includeMedia: boolean): CompletionParams => {
+const buildCompletionParams = (
+  messageId: string,
+  includeMedia: boolean,
+  messages = buildMessages(messageId, includeMedia),
+  enableTools = !includeMedia,
+): CompletionParams => {
   const enableThinking = !includeMedia
   return {
-    messages: buildMessages(messageId, includeMedia),
+    messages,
     n_threads: INFERENCE_CONFIG.N_THREADS,
     n_predict: INFERENCE_CONFIG.N_PREDICT_MAX,
     stop: [...GEMMA_STOPS],
@@ -295,8 +320,196 @@ const buildCompletionParams = (messageId: string, includeMedia: boolean): Comple
           thinking_budget_message: INFERENCE_CONFIG.THINKING_BUDGET_MESSAGE,
         }
       : {}),
+    ...(enableTools
+      ? {
+          tools: MEMORY_TOOL_DEFINITIONS as unknown as object,
+          tool_choice: 'auto',
+        }
+      : {}),
     parallel_tool_calls: false as unknown as object,
   }
+}
+
+const shouldOfferMemoryTools = (text: string): boolean => {
+  const normalised = text.toLowerCase()
+  return /\b(remember|memory|memories|recall|forget|forgot|what did i|what do you remember|did i tell you|list .*memories)\b/.test(normalised)
+}
+
+const shouldConsiderAutomaticMemory = (text: string): boolean => {
+  const normalised = text.toLowerCase()
+  return /\b(remember|keep in mind|for future|important|my name is|i am|i'm|i live|i work|my wife|my husband|my partner|my kid|my daughter|my son|i prefer|i like|i dislike|i hate|favourite|favorite|allergic|allergy|diet|birthday|address|phone number|email|project|deadline|goal|plan|preference)\b/.test(normalised)
+}
+
+const throwIfAborted = (signal: AbortSignal): void => {
+  if (signal.aborted) throw new Error('Generation cancelled.')
+}
+
+const shouldExtractTurnMemory = (
+  userText: string,
+  assistantText: string,
+  includeMedia: boolean,
+): boolean =>
+  storeApi.get().rememberConversation
+    && !includeMedia
+    && userText.trim() !== ''
+    && assistantText.trim() !== ''
+    && !shouldOfferMemoryTools(userText)
+    && shouldConsiderAutomaticMemory(userText)
+
+const textFromSdkBlock = (block: SdkContentBlock): string => {
+  if (block.type === 'text') return block.text ?? ''
+  if (block.type === 'tool_result') return block.toolResult?.content ?? ''
+  return ''
+}
+
+const textFromSdkMessage = (message: SdkMessage): string =>
+  message.content
+    ?? message.blocks?.map(textFromSdkBlock).filter((text) => text.trim() !== '').join('\n')
+    ?? ''
+
+const toStructuredLlamaMessage = (message: SdkMessage): RNLlamaOAICompatibleMessage | null => {
+  const content = textFromSdkMessage(message).trim()
+  if (content === '') return null
+  return {
+    role: message.role,
+    content,
+  }
+}
+
+const structuredSystemMessages = (request: SdkStructuredRequest): RNLlamaOAICompatibleMessage[] =>
+  [request.systemStatic, request.systemDynamic, request.system]
+    .filter((message): message is string => typeof message === 'string' && message.trim() !== '')
+    .map((content) => ({ role: 'system', content }))
+
+const structuredJsonInstruction = (request: SdkStructuredRequest): string => {
+  const schemaLabel = request.schemaName === undefined
+    ? 'the JSON schema below'
+    : `the "${request.schemaName}" JSON schema below`
+  return [
+    'Return only valid JSON.',
+    'Do not use markdown fences, prose, comments, or hidden reasoning.',
+    `The response must match ${schemaLabel}.`,
+    request.schema,
+  ].join('\n\n')
+}
+
+const memoryExtractionPolicy = (request: SdkStructuredRequest): RNLlamaOAICompatibleMessage[] => {
+  if (request.taskType !== 'memory-extract') return []
+  return [{
+    role: 'system',
+    content: [
+      'Apply a strict memory policy.',
+      'Return {"notes":[]} unless the conversation contains a stable fact, preference, plan, relationship, project detail, or explicit feedback that will matter in future chats.',
+      'Do not create memories for greetings, casual acknowledgements, jokes, image descriptions, transient questions, or the assistant\'s own suggestions.',
+      'If the user explicitly asks you to remember something, preserve the exact durable fact.',
+    ].join('\n'),
+  }]
+}
+
+const structuredMemoryCompletion = async (
+  request: SdkStructuredRequest,
+  signal?: AbortSignal,
+): Promise<string> => {
+  const messages = [
+    ...structuredSystemMessages(request),
+    ...memoryExtractionPolicy(request),
+    { role: 'system', content: structuredJsonInstruction(request) },
+    ...request.messages
+      .map(toStructuredLlamaMessage)
+      .filter((message): message is RNLlamaOAICompatibleMessage => message !== null),
+  ]
+
+  const result = await completeWithLoadedContext(
+    signal ?? new AbortController().signal,
+    {
+      messages,
+      n_threads: INFERENCE_CONFIG.N_THREADS,
+      n_predict: request.maxTokens ?? 512,
+      stop: [...GEMMA_STOPS],
+      jinja: true,
+      enable_thinking: false,
+      reasoning_format: 'none',
+      temperature: request.temperature ?? 0,
+      force_pure_content: true,
+      parallel_tool_calls: false as unknown as object,
+    },
+  )
+  return result.content
+}
+
+const extractTurnMemory = async (
+  messageId: string,
+  userText: string,
+  assistantText: string,
+  includeMedia: boolean,
+  signal: AbortSignal,
+): Promise<void> => {
+  if (!shouldExtractTurnMemory(userText, assistantText, includeMedia)) return
+  if (signal.aborted) return
+  storeApi.get()._setGenerationStatus('using-tools')
+  await memoryService.extractTurn({
+    sessionId: messageId,
+    userText,
+    assistantText,
+    signal,
+  })
+}
+
+const parseToolArguments = (raw: string): unknown => {
+  const trimmed = raw.trim()
+  if (trimmed === '') return {}
+  return JSON.parse(trimmed) as unknown
+}
+
+const runMemoryToolCalls = async (
+  messageId: string,
+  toolCalls: readonly LlamaToolCall[],
+): Promise<readonly LlamaToolResultMessage[]> => {
+  if (toolCalls.length === 0) return []
+
+  storeApi.get()._setGenerationStatus('using-tools')
+  const results: LlamaToolResultMessage[] = []
+
+  for (const call of toolCalls) {
+    const id = call.id ?? createId('tool')
+    const name = call.function.name
+    let args: unknown = {}
+
+    try {
+      args = parseToolArguments(call.function.arguments)
+      const execution = await memoryService.runTool(name, args)
+      storeApi.get().appendToolCall(messageId, {
+        id,
+        name,
+        args,
+        status: 'done',
+        result: execution.result,
+      })
+      results.push({
+        role: 'tool',
+        tool_call_id: id,
+        name,
+        content: execution.content,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      storeApi.get().appendToolCall(messageId, {
+        id,
+        name,
+        args,
+        status: 'error',
+        error: message,
+      })
+      results.push({
+        role: 'tool',
+        tool_call_id: id,
+        name,
+        content: `${name} failed: ${message}`,
+      })
+    }
+  }
+
+  return results
 }
 
 type TokenStreamActivity = 'content' | 'thinking' | 'none'
@@ -355,6 +568,12 @@ const releaseLoadedContext = async (): Promise<void> => {
   await context.release()
 }
 
+const shouldUseMultimodalGpu = async (context: LlamaContext): Promise<boolean> => {
+  if (!context.gpu || !INFERENCE_CONFIG.MULTIMODAL_USE_GPU) return false
+  if (INFERENCE_CONFIG.PROFILE !== 'simulator') return true
+  return !(await isSimulatorMultimodalGpuAutoDisabled().catch(() => false))
+}
+
 const ensureMultimodalReady = async (): Promise<void> => {
   const current = loaded
   if (current === null) throw new Error('Local Gemma is not loaded.')
@@ -377,7 +596,7 @@ const ensureMultimodalReady = async (): Promise<void> => {
     await writeRuntimeMarker({ modelId: current.id, stage: 'projector-load' })
     const multimodalReady = await current.context.initMultimodal({
       path: assets.projectorPath,
-      use_gpu: INFERENCE_CONFIG.MULTIMODAL_USE_GPU && current.context.gpu,
+      use_gpu: await shouldUseMultimodalGpu(current.context),
       image_max_tokens: INFERENCE_CONFIG.IMAGE_MAX_TOKENS,
     })
     if (!multimodalReady) {
@@ -409,35 +628,25 @@ const generationModelId = (preferred: ModelId, includeMedia: boolean): ModelId =
   return preferred
 }
 
-const generateWithLoadedContext = async (
-  messageId: string,
+const completeWithLoadedContext = async (
   signal: AbortSignal,
-  includeMedia: boolean,
+  params: CompletionParams,
+  onToken?: CompletionTokenHandler,
 ): Promise<NativeCompletionResult> => {
-  if (loaded === null) throw new Error('Local Gemma is not loaded.')
-
-  if (includeMedia) {
-    storeApi.get()._setGenerationStatus('preparing-vision')
-    await ensureMultimodalReady()
-  }
-
+  throwIfAborted(signal)
   if (loaded === null) throw new Error('Local Gemma is not loaded.')
   await writeRuntimeMarker({ modelId: loaded.id, stage: 'generation' })
   const request = await loaded.context.parallel
-    .completion(
-      buildCompletionParams(messageId, includeMedia),
-      (_requestId, token) => {
-        const activity = appendTokenData(messageId, token)
-        if (activity === 'thinking') {
-          storeApi.get()._setGenerationStatus('thinking')
-        } else if (activity === 'content') {
-          storeApi.get()._setGenerationStatus('streaming')
-        }
-      },
-    )
+    .completion(params, onToken)
     .catch((error) => clearRuntimeMarker().then(() => {
       throw error
     }))
+
+  if (signal.aborted) {
+    await request.stop().catch(() => undefined)
+    await clearRuntimeMarker()
+    throw new Error('Generation cancelled.')
+  }
 
   const abort = (): void => {
     void request.stop()
@@ -452,6 +661,77 @@ const generateWithLoadedContext = async (
     signal.removeEventListener('abort', abort)
     await clearRuntimeMarker()
   }
+}
+
+const streamingTokenHandler = (messageId: string): CompletionTokenHandler =>
+  (_requestId, token) => {
+    const activity = appendTokenData(messageId, token)
+    if (activity === 'thinking') {
+      storeApi.get()._setGenerationStatus('thinking')
+    } else if (activity === 'content') {
+      storeApi.get()._setGenerationStatus('streaming')
+    }
+  }
+
+const generateWithLoadedContext = async (
+  messageId: string,
+  signal: AbortSignal,
+  includeMedia: boolean,
+): Promise<NativeCompletionResult> => {
+  if (loaded === null) throw new Error('Local Gemma is not loaded.')
+  throwIfAborted(signal)
+
+  if (includeMedia) {
+    storeApi.get()._setGenerationStatus('preparing-vision')
+    await ensureMultimodalReady()
+    throwIfAborted(signal)
+  }
+
+  if (loaded === null) throw new Error('Local Gemma is not loaded.')
+  return completeWithLoadedContext(
+    signal,
+    buildCompletionParams(messageId, includeMedia, undefined, false),
+    streamingTokenHandler(messageId),
+  )
+}
+
+const toolChoiceMessage = (content: string, toolCalls: readonly LlamaToolCall[]): LlamaAssistantToolCallMessage => ({
+  role: 'assistant',
+  content,
+  tool_calls: toolCalls,
+})
+
+const generateWithMemoryTools = async (
+  messageId: string,
+  signal: AbortSignal,
+): Promise<NativeCompletionResult> => {
+  if (loaded === null) throw new Error('Local Gemma is not loaded.')
+  throwIfAborted(signal)
+
+  let messages = buildMessages(messageId, false)
+  let result = await completeWithLoadedContext(
+    signal,
+    buildCompletionParams(messageId, false, messages, true),
+    streamingTokenHandler(messageId),
+  )
+
+  for (let round = 0; round < TOOL_LIMITS.MAX_ROUNDS && result.tool_calls.length > 0; round += 1) {
+    throwIfAborted(signal)
+    const toolResultMessages = await runMemoryToolCalls(messageId, result.tool_calls)
+    messages = [
+      ...messages,
+      toolChoiceMessage(result.content, result.tool_calls),
+      ...toolResultMessages,
+    ]
+
+    result = await completeWithLoadedContext(
+      signal,
+      buildCompletionParams(messageId, false, messages, round + 1 < TOOL_LIMITS.MAX_ROUNDS),
+      streamingTokenHandler(messageId),
+    )
+  }
+
+  return result
 }
 
 const loadModelInternal = async (id: ModelId): Promise<void> => {
@@ -524,6 +804,8 @@ const loadModelOnce = async (id: ModelId): Promise<void> => {
   return promise
 }
 
+memoryService.setStructuredProvider(structuredMemoryCompletion)
+
 export const inferenceService = {
   async loadModel(id: ModelId): Promise<void> {
     await loadModelOnce(id)
@@ -546,7 +828,7 @@ export const inferenceService = {
     try {
       const userText = latestUserText()
       await memoryService.rememberExplicitInstruction(userText)
-      await memoryService.recallPreContext(userText)
+      throwIfAborted(opts.signal)
 
       if (opts.provider !== 'gemma-local') {
         appendBuffered(
@@ -571,14 +853,18 @@ export const inferenceService = {
       }
       if (loaded?.id !== targetModel) {
         await this.loadModel(targetModel)
+        throwIfAborted(opts.signal)
       }
 
-      const result = await generateWithLoadedContext(opts.messageId, opts.signal, includeMedia)
+      const result = !includeMedia
+        ? await generateWithMemoryTools(opts.messageId, opts.signal)
+        : await generateWithLoadedContext(opts.messageId, opts.signal, includeMedia)
       finishStream(opts.messageId)
       state.commitStreamingMessage(opts.messageId, {
         content: result.content,
         thinking: result.reasoning_content,
       })
+      await extractTurnMemory(opts.messageId, userText, result.content, includeMedia, opts.signal)
       state._setGenerationStatus('done')
     } catch (error) {
       finishStream(opts.messageId)

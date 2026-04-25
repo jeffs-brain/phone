@@ -1,8 +1,10 @@
-import { useCallback, type ReactNode } from 'react'
+import { useCallback, useEffect, type ReactNode } from 'react'
 import { useRouter } from 'expo-router'
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
+import { INFERENCE_CONFIG } from '../lib/constants'
+import { memoryService } from '../services/memory'
 import { useStore } from '../store'
 import type { ModelId, ModelStatus } from '../store/slices/inference'
 import type { GenerationStatus, ProviderId } from '../store/types'
@@ -20,6 +22,7 @@ const PROVIDER_OPTIONS: readonly { value: ProviderId; label: string; detail: str
 
 const BUSY_MODEL_STATUSES: readonly ModelStatus[] = ['checking', 'downloading', 'verifying', 'loaded', 'initialised']
 const ACTIVE_GENERATION_STATUSES: readonly GenerationStatus[] = [
+  'routing',
   'preparing-vision',
   'loading-first-token',
   'thinking',
@@ -39,6 +42,30 @@ const formatDownload = (downloadBytes: { received: number; total: number } | nul
   return `${formatBytes(downloadBytes.received)} of ${formatBytes(downloadBytes.total)} (${percentage}%)`
 }
 
+const modelLabel = (id: ModelId): string => MODEL_OPTIONS.find((option) => option.value === id)?.label ?? id
+
+const formatStatusValue = (status: ModelStatus | GenerationStatus): string =>
+  status.replace(/-/g, ' ')
+
+const memoryStatusCopy = (status: string, count: number): string => {
+  if (status === 'loading') return count === 0 ? 'Loading stored memories' : 'Refreshing stored memories'
+  if (count === 0) return 'No durable memories stored yet'
+  return `${count} stored memor${count === 1 ? 'y' : 'ies'} on this phone`
+}
+
+const runtimeProfileLabel = (): string =>
+  INFERENCE_CONFIG.PROFILE === 'simulator' ? 'Simulator' : 'Device'
+
+const simulatorMultimodalDetail = (): string => {
+  if (INFERENCE_CONFIG.PROFILE !== 'simulator') {
+    return 'Real devices use the Metal projector for multimodal turns.'
+  }
+  if (INFERENCE_CONFIG.PROFILE === 'simulator' && INFERENCE_CONFIG.MULTIMODAL_USE_GPU) {
+    return 'Simulator multimodal GPU is enabled with EXPO_PUBLIC_SIMULATOR_MULTIMODAL_GPU.'
+  }
+  return 'Simulator multimodal uses the CPU projector unless EXPO_PUBLIC_SIMULATOR_MULTIMODAL_GPU is enabled.'
+}
+
 const modelActionLabel = (modelStatus: ModelStatus): string => {
   if (modelStatus === 'error') return 'Retry model'
   if (BUSY_MODEL_STATUSES.includes(modelStatus)) return 'Working...'
@@ -54,6 +81,9 @@ const friendlyModelError = (error: string): string => {
   }
   if (normalised.includes('free') && normalised.includes('available')) {
     return 'There is not enough simulator storage for this model.'
+  }
+  if (normalised.includes('simulator projector gpu')) {
+    return 'Simulator projector GPU crashed. CPU vision fallback is enabled for this install.'
   }
   if (normalised.includes('projector') || normalised.includes('initialise')) {
     return 'Native model initialisation failed. Try Gemma 4 E2B on the simulator.'
@@ -88,6 +118,24 @@ function ToggleRow({
         <Text style={styles.optionDetail}>{detail}</Text>
       </View>
       <Switch value={value} onValueChange={onValueChange} />
+    </View>
+  )
+}
+
+function DiagnosticRow({
+  label,
+  value,
+  detail,
+}: {
+  readonly label: string
+  readonly value: string
+  readonly detail?: string
+}) {
+  return (
+    <View style={styles.diagnosticRow}>
+      <Text style={styles.diagnosticLabel}>{label}</Text>
+      <Text style={styles.diagnosticValue}>{value}</Text>
+      {detail === undefined ? null : <Text style={styles.diagnosticDetail}>{detail}</Text>}
     </View>
   )
 }
@@ -164,6 +212,10 @@ export default function Settings() {
   const voiceEnabled = useStore((s) => s.voiceEnabled)
   const rememberConversation = useStore((s) => s.rememberConversation)
   const devMode = useStore((s) => s.devMode)
+  const memoryNotes = useStore((s) => s.memoryNotes)
+  const memoryNotesStatus = useStore((s) => s.memoryNotesStatus)
+  const memoryNotesError = useStore((s) => s.memoryNotesError)
+  const lastExtractionSummary = useStore((s) => s.lastExtractionSummary)
   const setModelSize = useStore((s) => s.setModelSize)
   const setProviderMode = useStore((s) => s.setProviderMode)
   const setManualProvider = useStore((s) => s.setManualProvider)
@@ -172,10 +224,17 @@ export default function Settings() {
   const setDevMode = useStore((s) => s.setDevMode)
   const loadModel = useStore((s) => s.loadModel)
   const unloadModel = useStore((s) => s.unloadModel)
-  const clearMessages = useStore((s) => s.clearMessages)
+  const startNewThread = useStore((s) => s.startNewThread)
   const modelBusy = BUSY_MODEL_STATUSES.includes(modelStatus)
   const generationBusy = ACTIVE_GENERATION_STATUSES.includes(generationStatus)
   const downloadDetail = formatDownload(downloadBytes)
+  const modelStatusDetail = downloadDetail ?? (modelError === null ? undefined : friendlyModelError(modelError))
+  const selectedModel = modelLabel(modelSize)
+  const memoryLoading = memoryNotesStatus === 'loading'
+
+  useEffect(() => {
+    void memoryService.listMemories()
+  }, [])
 
   const handleLoadModel = useCallback(() => {
     void loadModel(modelSize).catch(() => undefined)
@@ -184,6 +243,22 @@ export default function Settings() {
   const handleUnloadModel = useCallback(() => {
     void unloadModel().catch(() => undefined)
   }, [unloadModel])
+
+  const handleRefreshMemories = useCallback(() => {
+    void memoryService.listMemories()
+  }, [])
+
+  const handleOpenMemories = useCallback(() => {
+    router.push('/memories')
+  }, [router])
+
+  const handleDone = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back()
+      return
+    }
+    router.replace('/')
+  }, [router])
 
   return (
     <ScrollView
@@ -199,7 +274,7 @@ export default function Settings() {
         </View>
         <Pressable
           accessibilityRole="button"
-          onPress={() => router.back()}
+          onPress={handleDone}
           style={({ pressed }) => [styles.doneButton, pressed ? styles.pressed : null]}
         >
           <Text style={styles.doneText}>Done</Text>
@@ -222,6 +297,36 @@ export default function Settings() {
           <ActionButton label="Unload" onPress={handleUnloadModel} muted disabled={modelBusy || generationBusy} />
         </View>
         {modelError === null ? null : <Text style={styles.errorText}>{friendlyModelError(modelError)}</Text>}
+      </Section>
+
+      <Section title="Runtime Diagnostics">
+        <DiagnosticRow label="Runtime profile" value={runtimeProfileLabel()} />
+        <DiagnosticRow label="Selected model" value={selectedModel} detail={modelSize} />
+        <DiagnosticRow label="Model status" value={formatStatusValue(modelStatus)} detail={modelStatusDetail} />
+        <DiagnosticRow label="Generation status" value={formatStatusValue(generationStatus)} />
+        <Text style={styles.diagnosticNote}>{simulatorMultimodalDetail()}</Text>
+      </Section>
+
+      <Section title="Memory">
+        <View style={styles.summaryPanel}>
+          <View style={styles.summaryCopy}>
+            <Text style={styles.optionLabel}>Stored memories</Text>
+            <Text style={styles.optionDetail}>{memoryStatusCopy(memoryNotesStatus, memoryNotes.length)}</Text>
+          </View>
+        </View>
+        <View style={styles.actionRow}>
+          <ActionButton label="Manage memories" onPress={handleOpenMemories} />
+          <ActionButton
+            label={memoryLoading ? 'Refreshing' : 'Refresh'}
+            onPress={handleRefreshMemories}
+            muted
+            disabled={memoryLoading}
+          />
+        </View>
+        {lastExtractionSummary === null ? null : (
+          <DiagnosticRow label="Last extraction" value={lastExtractionSummary} />
+        )}
+        {memoryNotesError === null ? null : <Text style={styles.errorText}>{memoryNotesError}</Text>}
       </Section>
 
       <Section title="Provider Mode">
@@ -277,7 +382,7 @@ export default function Settings() {
           value={devMode}
           onValueChange={setDevMode}
         />
-        <ActionButton label="Clear chat" onPress={clearMessages} muted />
+        <ActionButton label="New chat" onPress={startNewThread} muted />
       </Section>
     </ScrollView>
   )
@@ -375,13 +480,26 @@ const styles = StyleSheet.create({
   selectedOptionDetail: {
     color: '#8fcbb9',
   },
+  summaryPanel: {
+    backgroundColor: '#10141d',
+    borderColor: '#252b3a',
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 13,
+    paddingVertical: 12,
+  },
+  summaryCopy: {
+    gap: 2,
+  },
   actionRow: {
     flexDirection: 'row',
     gap: 10,
   },
   actionButton: {
     alignItems: 'center',
-    backgroundColor: '#8be9d4',
+    backgroundColor: '#16231f',
+    borderColor: '#3f8f7d',
+    borderWidth: 1,
     borderRadius: 8,
     flex: 1,
     minHeight: 44,
@@ -389,7 +507,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   actionText: {
-    color: '#07110f',
+    color: '#c8f7e8',
     fontSize: 14,
     fontWeight: '900',
   },
@@ -453,6 +571,38 @@ const styles = StyleSheet.create({
   toggleCopy: {
     flex: 1,
     paddingRight: 12,
+  },
+  diagnosticRow: {
+    backgroundColor: '#10141d',
+    borderColor: '#252b3a',
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+  },
+  diagnosticLabel: {
+    color: '#8b93a7',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0,
+    textTransform: 'uppercase',
+  },
+  diagnosticValue: {
+    color: '#f4f7fb',
+    fontSize: 15,
+    fontWeight: '800',
+    marginTop: 4,
+  },
+  diagnosticDetail: {
+    color: '#9aa3b5',
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 3,
+  },
+  diagnosticNote: {
+    color: '#9aa3b5',
+    fontSize: 13,
+    lineHeight: 18,
   },
   pressed: {
     opacity: 0.72,

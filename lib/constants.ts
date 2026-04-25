@@ -7,11 +7,19 @@ export const LLAMA_RUNTIME_PROFILE: LlamaRuntimeProfile =
   requestedLlamaProfile === 'simulator' ? 'simulator' : 'device'
 
 const isSimulatorProfile = LLAMA_RUNTIME_PROFILE === 'simulator'
-const requestedSimulatorVision = process.env.EXPO_PUBLIC_SIMULATOR_VISION
-const simulatorVisionDisabled =
-  requestedSimulatorVision === 'disabled' ||
-  requestedSimulatorVision === 'false' ||
-  requestedSimulatorVision === '0'
+const enabledEnvValues = new Set(['enabled', 'true', '1', 'yes', 'on'])
+const disabledEnvValues = new Set(['disabled', 'false', '0', 'no', 'off'])
+
+const envFlag = (value: string | undefined, fallback: boolean): boolean => {
+  const normalised = value?.trim().toLowerCase()
+  if (normalised === undefined || normalised === '') return fallback
+  if (enabledEnvValues.has(normalised)) return true
+  if (disabledEnvValues.has(normalised)) return false
+  return fallback
+}
+
+const simulatorVisionEnabled = envFlag(process.env.EXPO_PUBLIC_SIMULATOR_VISION, true)
+const simulatorMultimodalGpuEnabled = envFlag(process.env.EXPO_PUBLIC_SIMULATOR_MULTIMODAL_GPU, false)
 
 export const INFERENCE_CONFIG = {
   PROFILE: LLAMA_RUNTIME_PROFILE,
@@ -23,8 +31,8 @@ export const INFERENCE_CONFIG = {
   N_GPU_LAYERS: 99,
   N_PARALLEL: 1,
   IMAGE_MAX_TOKENS: isSimulatorProfile ? 256 : 512,
-  MULTIMODAL_GENERATION_ENABLED: !isSimulatorProfile || !simulatorVisionDisabled,
-  MULTIMODAL_USE_GPU: !isSimulatorProfile,
+  MULTIMODAL_GENERATION_ENABLED: !isSimulatorProfile || simulatorVisionEnabled,
+  MULTIMODAL_USE_GPU: !isSimulatorProfile || simulatorMultimodalGpuEnabled,
   THINKING_BUDGET_TOKENS: isSimulatorProfile ? 32 : 64,
   THINKING_BUDGET_MESSAGE: '\n\nThinking budget reached; answer now.',
   CTX_SHIFT: false as const,
@@ -66,5 +74,9 @@ export const SYSTEM_PROMPT = [
   'Keep reasoning in the hidden thinking channel only.',
   'Visible answers must not contain thought tags, channel markers, or scratchpad text.',
   'Use remembered facts only when they are relevant.',
+  'Use memory_recall only when stored context would materially help answer the current user.',
+  'Use memory_remember only for explicit remember requests or clearly durable high-confidence user facts, preferences, plans, or feedback.',
+  'Never save greetings, one-off small talk, temporary state, or facts that will not matter later.',
+  'Use memory_list and memory_forget only when the user asks to inspect or delete memories.',
   'Never claim private data left the phone unless the selected provider is cloud.',
 ].join('\n')

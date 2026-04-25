@@ -1,10 +1,12 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
+import { LiquidGlassView, isLiquidGlassSupported } from '@callstack/liquid-glass'
 import * as DocumentPicker from 'expo-document-picker'
 import * as FileSystem from 'expo-file-system/legacy'
 import * as ImagePicker from 'expo-image-picker'
 import { useRouter } from 'expo-router'
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -15,15 +17,19 @@ import {
   Text,
   TextInput,
   View,
+  type ColorValue,
   type ListRenderItemInfo,
+  type StyleProp,
+  type ViewStyle,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { useStore } from '../store'
 import type { ModelStatus } from '../store/slices/inference'
-import type { ContentPart, GenerationStatus, Message, ProviderId, RouteDecision } from '../store/types'
+import type { ContentPart, GenerationStatus, Message, ProviderId, RouteDecision, ToolCall } from '../store/types'
 
 const ACTIVE_GENERATION_STATUSES: readonly GenerationStatus[] = [
+  'routing',
   'preparing-vision',
   'loading-first-token',
   'thinking',
@@ -50,6 +56,7 @@ const MODEL_STATUS_LABELS: Record<ModelStatus, string> = {
 
 const GENERATION_STATUS_LABELS: Record<GenerationStatus, string> = {
   idle: 'Idle',
+  routing: 'Routing',
   'preparing-vision': 'Preparing vision',
   'loading-first-token': 'Loading first token',
   thinking: 'Thinking',
@@ -111,6 +118,13 @@ type StructuredThinking = {
 type AttachmentWithDisplayName = ContentPart & {
   readonly fileName?: unknown
   readonly name?: unknown
+}
+
+type GlassSurfaceProps = {
+  readonly children: ReactNode
+  readonly style?: StyleProp<ViewStyle>
+  readonly effect?: 'clear' | 'regular'
+  readonly tintColor?: ColorValue
 }
 
 const imagePartFromLibraryAsset = (asset: ImagePicker.ImagePickerAsset): ImageContentPart => ({
@@ -184,6 +198,9 @@ const friendlyModelError = (error: string | null): string => {
   if (normalised.includes('free') && normalised.includes('available')) {
     return 'There is not enough simulator storage for this model.'
   }
+  if (normalised.includes('simulator projector gpu')) {
+    return 'Simulator projector GPU crashed. CPU vision fallback is enabled for this install.'
+  }
   if (normalised.includes('projector') || normalised.includes('initialise')) {
     return 'Native model initialisation failed. Retry, or use Gemma 4 E2B for the simulator.'
   }
@@ -224,6 +241,12 @@ const getRoleLabel = (role: Message['role']): string => {
   if (role === 'assistant') return 'Jeff'
   if (role === 'tool') return 'Tool'
   return 'System'
+}
+
+const toolCallLabel = (toolCall: ToolCall): string => {
+  if (toolCall.status === 'done') return `${toolCall.name} done`
+  if (toolCall.status === 'error') return `${toolCall.name} failed`
+  return `${toolCall.name} ${toolCall.status}`
 }
 
 const getModelDetail = (
@@ -296,6 +319,14 @@ const textPartFromDocument = async (asset: DocumentPicker.DocumentPickerAsset): 
     throw new Error(`${asset.name} is larger than ${Math.round(TEXT_FILE_MAX_BYTES / 1024)} KB.`)
   }
 
+  const info = await FileSystem.getInfoAsync(asset.uri)
+  if (!info.exists || info.isDirectory) {
+    throw new Error(`${asset.name} could not be read.`)
+  }
+  if ('size' in info && typeof info.size === 'number' && info.size > TEXT_FILE_MAX_BYTES) {
+    throw new Error(`${asset.name} is larger than ${Math.round(TEXT_FILE_MAX_BYTES / 1024)} KB.`)
+  }
+
   const text = await FileSystem.readAsStringAsync(asset.uri, {
     encoding: FileSystem.EncodingType.UTF8,
   })
@@ -343,6 +374,35 @@ function EmptyState() {
       <Text style={styles.emptyCopy}>Ask something, test routing, or load a local model from settings first.</Text>
     </View>
   )
+}
+
+function GlassSurface({
+  children,
+  style,
+  effect = 'regular',
+  tintColor = 'rgba(16, 20, 29, 0.72)',
+}: GlassSurfaceProps) {
+  const surfaceStyle = [
+    styles.glassSurface,
+    isLiquidGlassSupported ? styles.glassSurfaceNative : styles.glassSurfaceFallback,
+    style,
+  ]
+
+  if (isLiquidGlassSupported) {
+    return (
+      <LiquidGlassView
+        colorScheme="dark"
+        effect={effect}
+        interactive
+        style={surfaceStyle}
+        tintColor={tintColor}
+      >
+        {children}
+      </LiquidGlassView>
+    )
+  }
+
+  return <View style={surfaceStyle}>{children}</View>
 }
 
 function ThinkingDisclosure({ thinking }: { thinking: ThinkingDetail }) {
@@ -483,6 +543,15 @@ function MessageBubble({ message }: { message: Message }) {
           )}
         </View>
         {thinking === null ? null : <ThinkingDisclosure thinking={thinking} />}
+        {message.toolCalls === undefined || message.toolCalls.length === 0 ? null : (
+          <View style={styles.toolCallStrip}>
+            {message.toolCalls.map((toolCall) => (
+              <Text key={toolCall.id} style={styles.toolCallText}>
+                {toolCallLabel(toolCall)}
+              </Text>
+            ))}
+          </View>
+        )}
         {images.length === 0 ? null : (
           <View style={styles.messageImageGrid}>
             {images.map((part, index) => (
@@ -520,6 +589,7 @@ export default function Chat() {
   const draft = useStore((s) => s.draft)
   const setDraft = useStore((s) => s.setDraft)
   const sendUserMessage = useStore((s) => s.sendUserMessage)
+  const startNewThread = useStore((s) => s.startNewThread)
   const loadModel = useStore((s) => s.loadModel)
   const stagedAttachments = useStore((s) => s.stagedAttachments)
   const stageAttachment = useStore((s) => s.stageAttachment)
@@ -616,8 +686,9 @@ export default function Chat() {
       const failures: string[] = []
       for (const asset of result.assets) {
         try {
-          if (asset.mimeType?.startsWith('image/') === true) {
-            stageAttachment(await assertReadableLlamaImage(imagePartFromDocumentAsset(asset)))
+          const imagePart = imagePartFromDocumentAsset(asset)
+          if (asset.mimeType?.startsWith('image/') === true || isSupportedLlamaImage(imagePart)) {
+            stageAttachment(await assertReadableLlamaImage(imagePart))
             continue
           }
 
@@ -644,6 +715,30 @@ export default function Chat() {
     setActionError(null)
     cancelGeneration()
   }, [cancelGeneration])
+
+  const handleOpenMemories = useCallback(() => {
+    router.push('/memories')
+  }, [router])
+
+  const handleNewThread = useCallback(() => {
+    if (generationActive) return
+    const start = (): void => {
+      setActionError(null)
+      startNewThread()
+    }
+    if (messages.length === 0) {
+      start()
+      return
+    }
+    Alert.alert(
+      'Start new chat?',
+      'This clears the visible thread. Stored memories stay in the brain.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'New chat', style: 'destructive', onPress: start },
+      ],
+    )
+  }, [generationActive, messages.length, startNewThread])
 
   const handleRetryModel = useCallback(() => {
     setActionError(null)
@@ -675,16 +770,40 @@ export default function Chat() {
           <Text style={styles.eyebrow}>Private phone brain</Text>
           <Text style={styles.title}>Jeff</Text>
         </View>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => router.push('/settings')}
-          style={({ pressed }) => [styles.settingsButton, pressed ? styles.pressed : null]}
-        >
-          <Text style={styles.settingsButtonText}>Settings</Text>
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled: generationActive }}
+            disabled={generationActive}
+            onPress={handleNewThread}
+            style={({ pressed }) => [
+              styles.headerButton,
+              generationActive ? styles.disabledHeaderButton : null,
+              pressed ? styles.pressed : null,
+            ]}
+          >
+            <Text style={[styles.headerButtonText, generationActive ? styles.disabledHeaderButtonText : null]}>
+              New
+            </Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={handleOpenMemories}
+            style={({ pressed }) => [styles.headerButton, styles.brainButton, pressed ? styles.pressed : null]}
+          >
+            <Text style={[styles.headerButtonText, styles.brainButtonText]}>Brain</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => router.push('/settings')}
+            style={({ pressed }) => [styles.headerButton, pressed ? styles.pressed : null]}
+          >
+            <Text style={styles.headerButtonText}>Settings</Text>
+          </Pressable>
+        </View>
       </View>
 
-      <View style={styles.statusPanel}>
+      <GlassSurface effect="clear" style={styles.statusPanel} tintColor="rgba(16, 20, 29, 0.64)">
         <ProviderBadge decision={lastDecision} modelSize={modelId ?? modelSize} />
         <View style={styles.statusDivider} />
         <View style={styles.modelStatus}>
@@ -725,7 +844,7 @@ export default function Chat() {
             </View>
           ) : null}
         </View>
-      </View>
+      </GlassSurface>
 
       <FlatList
         ref={listRef}
@@ -749,7 +868,7 @@ export default function Chat() {
           onClear={clearStaged}
           onRemove={handleRemoveStagedAttachment}
         />
-        <View style={styles.composer}>
+        <GlassSurface effect="regular" style={styles.composer} tintColor="rgba(16, 20, 29, 0.74)">
           <TextInput
             multiline
             value={draft}
@@ -811,7 +930,7 @@ export default function Chat() {
               </Pressable>
             )}
           </View>
-        </View>
+        </GlassSurface>
       </View>
     </KeyboardAvoidingView>
   )
@@ -847,28 +966,55 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     marginTop: 2,
   },
-  settingsButton: {
+  headerActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  headerButton: {
     backgroundColor: '#171b25',
     borderColor: '#2d3444',
     borderRadius: 8,
     borderWidth: 1,
     minHeight: 40,
     justifyContent: 'center',
-    paddingHorizontal: 14,
+    paddingHorizontal: 10,
   },
-  settingsButtonText: {
+  headerButtonText: {
     color: '#f4f7fb',
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  brainButton: {
+    backgroundColor: '#16231f',
+    borderColor: '#3f8f7d',
+  },
+  brainButtonText: {
+    color: '#c8f7e8',
+  },
+  disabledHeaderButton: {
+    opacity: 0.52,
+  },
+  disabledHeaderButtonText: {
+    color: '#9aa3b5',
   },
   pressed: {
     opacity: 0.72,
   },
-  statusPanel: {
+  glassSurface: {
     backgroundColor: '#10141d',
     borderColor: '#252b3a',
     borderRadius: 8,
     borderWidth: 1,
+    overflow: 'hidden',
+  },
+  glassSurfaceNative: {
+    backgroundColor: 'transparent',
+  },
+  glassSurfaceFallback: {
+    backgroundColor: '#10141d',
+  },
+  statusPanel: {
     marginHorizontal: 18,
     padding: 12,
   },
@@ -1036,6 +1182,23 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 21,
   },
+  toolCallStrip: {
+    gap: 5,
+    marginBottom: 8,
+  },
+  toolCallText: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#202838',
+    borderColor: '#344052',
+    borderRadius: 8,
+    borderWidth: 1,
+    color: '#9ff0dd',
+    fontSize: 11,
+    fontWeight: '800',
+    overflow: 'hidden',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
   messageImageGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1195,10 +1358,6 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   composer: {
-    backgroundColor: '#10141d',
-    borderColor: '#283044',
-    borderRadius: 8,
-    borderWidth: 1,
     gap: 8,
     minHeight: 56,
     padding: 8,

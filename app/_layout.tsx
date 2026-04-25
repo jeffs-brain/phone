@@ -6,7 +6,12 @@ import { StatusBar } from 'expo-status-bar'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
-import { readRuntimeMarker, clearRuntimeMarker, describeRuntimeMarker } from '../services/runtime-marker'
+import {
+  readRuntimeMarker,
+  clearRuntimeMarker,
+  describeRuntimeMarker,
+  disableSimulatorMultimodalGpu,
+} from '../services/runtime-marker'
 import { storeApi } from '../store'
 
 export default function RootLayout() {
@@ -14,10 +19,15 @@ export default function RootLayout() {
     void readRuntimeMarker()
       .then(async (marker) => {
         if (marker === null) return
+        if (marker.stage === 'projector-load') {
+          await disableSimulatorMultimodalGpu()
+        }
         const state = storeApi.get()
         state._setModelId(marker.modelId)
         state._setModelError(describeRuntimeMarker(marker))
         state._setModelStatus('error')
+        state._setGenerationStatus('idle')
+        state._setAbortController(null)
         await clearRuntimeMarker()
       })
       .catch(() => undefined)
@@ -35,6 +45,7 @@ export default function RootLayout() {
         >
           <Stack.Screen name="index" />
           <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="memories" options={{ presentation: 'modal' }} />
         </Stack>
       </SafeAreaProvider>
     </GestureHandlerRootView>

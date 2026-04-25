@@ -3,6 +3,7 @@ import { routerService } from '../../services/router'
 import type { ContentPart, GenerationStatus, Message, RouteDecision, Slice, ToolCall } from '../types'
 
 const ACTIVE_GENERATION_STATUSES: readonly GenerationStatus[] = [
+  'routing',
   'preparing-vision',
   'loading-first-token',
   'thinking',
@@ -21,6 +22,7 @@ export type CommitStreamingMessageInput = {
 }
 
 export type ChatSlice = {
+  threadId: string
   messages: Message[]
   draft: string
   stagedAttachments: ContentPart[]
@@ -35,10 +37,12 @@ export type ChatSlice = {
   markThinkingDone: (id: string) => void
   commitStreamingMessage: (id: string, final?: CommitStreamingMessageInput) => void
   appendToolCall: (id: string, toolCall: ToolCall) => void
+  startNewThread: () => void
   clearMessages: () => void
 }
 
 export const createChatSlice: Slice<ChatSlice> = (set, get) => ({
+  threadId: createId('thread'),
   messages: [],
   draft: '',
   stagedAttachments: [],
@@ -64,6 +68,10 @@ export const createChatSlice: Slice<ChatSlice> = (set, get) => ({
     ]
     if (parts.length === 0) return
 
+    const abortController = new AbortController()
+    get()._setGenerationStatus('routing')
+    get()._setAbortController(abortController)
+
     const userMessage: Message = {
       id: createId('user'),
       role: 'user',
@@ -85,28 +93,37 @@ export const createChatSlice: Slice<ChatSlice> = (set, get) => ({
       .map((message) => message.parts
         .filter((part): part is Extract<ContentPart, { type: 'text' }> => part.type === 'text')
         .map((part) => `${message.role}: ${part.text}`)
-        .join('\n'))
+      .join('\n'))
       .filter((line) => line.trim() !== '')
 
-    const routeDecision = state.providerMode === 'smart'
-      ? await routerService.classify(routingText, history, state.manualProvider)
-      : routerService.manual(state.manualProvider)
-
-    get().setLastDecision(routeDecision)
-
-    const assistantMessageId = createId('assistant')
-    get().beginAssistantMessage(assistantMessageId, routeDecision)
-
-    const abortController = new AbortController()
-    get()._setAbortController(abortController)
-
     try {
+      const routeDecision = state.providerMode === 'smart'
+        ? await routerService.classify(routingText, history, state.manualProvider)
+        : routerService.manual(state.manualProvider)
+
+      if (abortController.signal.aborted) {
+        get()._setGenerationStatus('idle')
+        return
+      }
+
+      get().setLastDecision(routeDecision)
+
+      const assistantMessageId = createId('assistant')
+      get().beginAssistantMessage(assistantMessageId, routeDecision)
+
       const { inferenceService } = await import('../../services/inference')
       await inferenceService.generate({
         messageId: assistantMessageId,
         provider: routeDecision.provider,
         signal: abortController.signal,
       })
+    } catch (error) {
+      if (abortController.signal.aborted) {
+        get()._setGenerationStatus('idle')
+        return
+      }
+      get()._setGenerationStatus('error')
+      throw error
     } finally {
       get()._setAbortController(null)
     }
@@ -211,5 +228,18 @@ export const createChatSlice: Slice<ChatSlice> = (set, get) => ({
       }
     }, false, 'chat/appendToolCall'),
 
-  clearMessages: () => set({ messages: [] }, false, 'chat/clearMessages'),
+  startNewThread: () =>
+    set({
+      threadId: createId('thread'),
+      messages: [],
+      draft: '',
+      stagedAttachments: [],
+    }, false, 'chat/startNewThread'),
+  clearMessages: () =>
+    set({
+      threadId: createId('thread'),
+      messages: [],
+      draft: '',
+      stagedAttachments: [],
+    }, false, 'chat/clearMessages'),
 })

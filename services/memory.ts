@@ -7,22 +7,70 @@ import {
   createRetrieval,
   createSearchIndex,
   resolveExpoDocumentDirectory,
+  toPath,
+  type CompletionRequest as SdkCompletionRequest,
+  type CompletionResponse as SdkCompletionResponse,
+  type ExtractResult,
   type MemoryClient,
+  type Provider,
   type RecallHit as SdkRecallHit,
   type Scope,
+  type StoredMemoryNote,
+  type StructuredRequest as SdkStructuredRequest,
 } from '@jeffs-brain/memory-react-native'
 
 import { BRAIN_ID, MEMORY_PRECONTEXT } from '../lib/constants'
 import { createId } from '../lib/id'
 import { storeApi } from '../store'
-import type { RecallHit } from '../store/slices/memory'
+import type { MemoryNoteSummary, RecallHit } from '../store/slices/memory'
 
 const MEMORY_ACTOR_ID = 'alex-jay'
 const DEFAULT_SCOPE: Scope = 'global'
 const HASH_EMBEDDING_DIM = 384
+const MAX_TOOL_RECALL_HITS = 5
+const MAX_LIST_NOTES = 12
+const MEMORY_NOTE_PREVIEW_LENGTH = 180
+const MANAGED_MEMORY_PATH_PREFIX = 'memory/global/'
+const GENERATED_MEMORY_INDEX_PATH = `${MANAGED_MEMORY_PATH_PREFIX}MEMORY.md`
+
+const MEMORY_TOOL_NAMES = ['memory_recall', 'memory_list', 'memory_remember', 'memory_forget'] as const
+
+export type MemoryToolName = typeof MEMORY_TOOL_NAMES[number]
+
+type MemoryToolExecution = {
+  readonly content: string
+  readonly result: unknown
+}
+
+type StructuredProviderHandler = (request: SdkStructuredRequest, signal?: AbortSignal) => Promise<string>
+
+type ExtractTurnOptions = {
+  readonly sessionId: string
+  readonly userText: string
+  readonly assistantText: string
+  readonly signal?: AbortSignal
+}
+
+type JsonRecord = Record<string, unknown>
 
 let memoryClient: MemoryClient | null = null
 let memoryClientInFlight: Promise<MemoryClient> | null = null
+let structuredProviderHandler: StructuredProviderHandler | null = null
+
+const memoryExtractionProvider: Provider = {
+  name: () => 'local-gemma-memory',
+  modelName: () => 'gemma-4-local',
+  supportsStructuredDecoding: () => true,
+  complete: async (_request: SdkCompletionRequest): Promise<SdkCompletionResponse> => {
+    throw new Error('Memory extraction provider only supports structured requests.')
+  },
+  structured: async (request, signal) => {
+    if (structuredProviderHandler === null) {
+      throw new Error('Memory extraction provider has not been initialised.')
+    }
+    return structuredProviderHandler(request, signal)
+  },
+}
 
 const cleanFilenamePart = (text: string): string => {
   const cleaned = text
@@ -47,6 +95,52 @@ const explicitMemoryText = (text: string): string | null => {
   return memory === '' ? null : memory
 }
 
+const isRecord = (value: unknown): value is JsonRecord =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const stringArg = (args: JsonRecord, name: string): string => {
+  const value = args[name]
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`${name} must be a non-empty string.`)
+  }
+  return value.trim()
+}
+
+const optionalStringArg = (args: JsonRecord, name: string): string | undefined => {
+  const value = args[name]
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'string') throw new Error(`${name} must be a string.`)
+  const trimmed = value.trim()
+  return trimmed === '' ? undefined : trimmed
+}
+
+const optionalStringArrayArg = (args: JsonRecord, name: string): readonly string[] | undefined => {
+  const value = args[name]
+  if (value === undefined || value === null) return undefined
+  if (!Array.isArray(value)) throw new Error(`${name} must be a string array.`)
+  const strings = value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => item !== '')
+  return strings.length === 0 ? undefined : strings.slice(0, 8)
+}
+
+const optionalPositiveIntArg = (args: JsonRecord, name: string, fallback: number, max: number): number => {
+  const value = args[name]
+  if (value === undefined || value === null) return fallback
+  const numberValue = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(numberValue)) return fallback
+  return Math.max(1, Math.min(max, Math.floor(numberValue)))
+}
+
+const requireToolArgs = (args: unknown): JsonRecord => {
+  if (!isRecord(args)) throw new Error('Tool arguments must be an object.')
+  return args
+}
+
+const isMemoryToolName = (name: string): name is MemoryToolName =>
+  MEMORY_TOOL_NAMES.some((toolName) => toolName === name)
+
 const toRecallHit = (hit: SdkRecallHit): RecallHit => {
   const text = hit.note.indexEntry?.trim() || hit.note.content.trim() || hit.content.trim()
   return {
@@ -54,6 +148,84 @@ const toRecallHit = (hit: SdkRecallHit): RecallHit => {
     score: hit.score,
     source: hit.note.name,
     text,
+  }
+}
+
+const textPreview = (text: string | undefined): string | undefined => {
+  const trimmed = text?.replace(/\s+/g, ' ').trim()
+  if (trimmed === undefined || trimmed === '') return undefined
+  return trimmed.length <= MEMORY_NOTE_PREVIEW_LENGTH
+    ? trimmed
+    : `${trimmed.slice(0, MEMORY_NOTE_PREVIEW_LENGTH - 3)}...`
+}
+
+const toMemoryNoteSummary = (note: StoredMemoryNote): MemoryNoteSummary => {
+  const preview = textPreview(note.indexEntry) ?? textPreview(note.content) ?? textPreview(note.description)
+
+  return {
+    path: String(note.path),
+    name: note.name,
+    description: note.description,
+    content: note.content,
+    created: note.created,
+    modified: note.modified,
+    type: note.type,
+    tags: [...note.tags],
+    ...(note.indexEntry === undefined ? {} : { indexEntry: note.indexEntry }),
+    ...(preview === undefined ? {} : { preview }),
+  }
+}
+
+const isManagedMemoryNotePath = (path: string): boolean =>
+  path.startsWith(MANAGED_MEMORY_PATH_PREFIX) &&
+  path.endsWith('.md') &&
+  path !== GENERATED_MEMORY_INDEX_PATH
+
+const resolveManagedMemoryPath = async (client: MemoryClient, rawPath: string): Promise<string> => {
+  const path = String(toPath(rawPath))
+  if (!isManagedMemoryNotePath(path)) {
+    throw new Error('Only stored global memory notes can be deleted.')
+  }
+
+  const notes = await client.listNotes({ scope: DEFAULT_SCOPE, actorId: MEMORY_ACTOR_ID })
+  if (!notes.some((note) => String(note.path) === path)) {
+    throw new Error('Memory note was not found on this phone.')
+  }
+
+  return path
+}
+
+const listMemoryNoteSummaries = async (client: MemoryClient): Promise<MemoryNoteSummary[]> => {
+  const notes = await client.listNotes({ scope: DEFAULT_SCOPE, actorId: MEMORY_ACTOR_ID })
+  return notes
+    .slice()
+    .sort((left, right) => right.modified.localeCompare(left.modified))
+    .map(toMemoryNoteSummary)
+}
+
+const updateMemoryNotesReady = (notes: MemoryNoteSummary[]): void => {
+  const store = storeApi.get()
+  store.setMemoryNotes(notes)
+  store.setMemoryNotesStatus('ready')
+  store.setMemoryNotesError(null)
+}
+
+const updateMemoryNotesError = (detail: string): void => {
+  const store = storeApi.get()
+  store.setMemoryNotesStatus('error')
+  store.setMemoryNotesError(detail)
+}
+
+const refreshMemoryNotesAfterDelete = async (client: MemoryClient, deletedPath: string): Promise<void> => {
+  try {
+    const notes = await listMemoryNoteSummaries(client)
+    updateMemoryNotesReady(notes)
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    const existingNotes = storeApi.get().memoryNotes.filter((note) => note.path !== deletedPath)
+    storeApi.get().setMemoryNotes(existingNotes)
+    updateMemoryNotesError(`Forgot memory, but refresh failed: ${detail}`)
+    appendMemoryLog('memory_list', 'error', detail)
   }
 }
 
@@ -70,6 +242,99 @@ const appendMemoryLog = (
     ...(detail === undefined ? {} : { detail }),
   })
 }
+
+const recallSummary = (hits: readonly RecallHit[]): string => {
+  if (hits.length === 0) return 'I did not find any matching memories.'
+  return hits
+    .map((hit, index) => `${index + 1}. ${hit.text}`)
+    .join('\n')
+}
+
+const rememberMemory = async (memory: string, name?: string, tags?: readonly string[]): Promise<string> => {
+  const client = await getMemoryClient()
+  const note = await client.remember({
+    filename: `${new Date().toISOString().slice(0, 10)}-${cleanFilenamePart(memory)}.md`,
+    name: name ?? noteTitle(memory),
+    description: memory,
+    content: memory,
+    indexEntry: memory,
+    scope: DEFAULT_SCOPE,
+    actorId: MEMORY_ACTOR_ID,
+    tags: [...(tags ?? []), 'chat'],
+  })
+  return note.name
+}
+
+const extractionSummary = (result: ExtractResult): string => {
+  if (result.skipped) return `Memory extraction skipped: ${result.reason ?? 'no durable memories found'}`
+  if (result.created.length === 0) return 'No new durable memories found'
+  return `Saved ${result.created.length} memor${result.created.length === 1 ? 'y' : 'ies'}`
+}
+
+export const MEMORY_TOOL_DEFINITIONS = [
+  {
+    type: 'function',
+    function: {
+      name: 'memory_recall',
+      description: 'Search Alex Jay\'s private on-device memories for relevant facts.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'The memory search query.' },
+          topK: { type: 'integer', minimum: 1, maximum: MAX_TOOL_RECALL_HITS },
+        },
+        required: ['query'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'memory_list',
+      description: 'List recent private memories stored on this phone.',
+      parameters: {
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: MAX_LIST_NOTES },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'memory_remember',
+      description: 'Store a durable private memory for explicit remember requests or clearly lasting user facts, preferences, plans, or feedback. Do not store greetings, small talk, or one-off context.',
+      parameters: {
+        type: 'object',
+        properties: {
+          content: { type: 'string', description: 'The exact fact or note to remember.' },
+          name: { type: 'string', description: 'A short memory title.' },
+          tags: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['content'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'memory_forget',
+      description: 'Delete a private memory only when the user explicitly asks for a specific memory path to be forgotten.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'The exact memory path to delete.' },
+        },
+        required: ['path'],
+        additionalProperties: false,
+      },
+    },
+  },
+] as const
 
 const createClient = async (): Promise<MemoryClient> => {
   const fileAdapter = await createExpoFileAdapter()
@@ -88,6 +353,7 @@ const createClient = async (): Promise<MemoryClient> => {
     searchIndex,
     retrieval,
     embedder,
+    provider: memoryExtractionProvider,
     defaultActorId: MEMORY_ACTOR_ID,
     defaultScope: DEFAULT_SCOPE,
   })
@@ -110,6 +376,59 @@ const getMemoryClient = async (): Promise<MemoryClient> => {
 }
 
 export const memoryService = {
+  setStructuredProvider(handler: StructuredProviderHandler): void {
+    structuredProviderHandler = handler
+  },
+
+  async listMemories(): Promise<MemoryNoteSummary[]> {
+    const store = storeApi.get()
+    store.setMemoryNotesStatus('loading')
+    store.setMemoryNotesError(null)
+    appendMemoryLog('memory_list', 'running')
+
+    try {
+      const client = await getMemoryClient()
+      const notes = await listMemoryNoteSummaries(client)
+      updateMemoryNotesReady(notes)
+      appendMemoryLog('memory_list', 'done', `${notes.length} note${notes.length === 1 ? '' : 's'}`)
+      return notes
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      updateMemoryNotesError(detail)
+      appendMemoryLog('memory_list', 'error', detail)
+      return storeApi.get().memoryNotes
+    }
+  },
+
+  async deleteMemory(path: string): Promise<boolean> {
+    const trimmedPath = path.trim()
+    if (trimmedPath === '') {
+      const detail = 'Memory path is required.'
+      updateMemoryNotesError(detail)
+      appendMemoryLog('memory_forget', 'error', detail)
+      return false
+    }
+
+    const store = storeApi.get()
+    store.setMemoryNotesStatus('loading')
+    store.setMemoryNotesError(null)
+    appendMemoryLog('memory_forget', 'running', trimmedPath)
+
+    try {
+      const client = await getMemoryClient()
+      const memoryPath = await resolveManagedMemoryPath(client, trimmedPath)
+      await client.forget(toPath(memoryPath))
+      await refreshMemoryNotesAfterDelete(client, memoryPath)
+      appendMemoryLog('memory_forget', 'done', memoryPath)
+      return true
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      updateMemoryNotesError(detail)
+      appendMemoryLog('memory_forget', 'error', detail)
+      return false
+    }
+  },
+
   async recallPreContext(query: string): Promise<RecallHit[]> {
     const trimmed = query.trim()
     if (trimmed === '') {
@@ -141,19 +460,9 @@ export const memoryService = {
 
     appendMemoryLog('memory_remember', 'running', noteTitle(memory))
     try {
-      const client = await getMemoryClient()
-      const note = await client.remember({
-        filename: `${new Date().toISOString().slice(0, 10)}-${cleanFilenamePart(memory)}.md`,
-        name: noteTitle(memory),
-        description: memory,
-        content: memory,
-        indexEntry: memory,
-        scope: DEFAULT_SCOPE,
-        actorId: MEMORY_ACTOR_ID,
-        tags: ['explicit', 'chat'],
-      })
-      storeApi.get().setLastExtraction(`Remembered: ${note.name}`)
-      appendMemoryLog('memory_remember', 'done', note.name)
+      const noteName = await rememberMemory(memory, noteTitle(memory), ['explicit'])
+      storeApi.get().setLastExtraction(`Remembered: ${noteName}`)
+      appendMemoryLog('memory_remember', 'done', noteName)
       return true
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
@@ -161,5 +470,92 @@ export const memoryService = {
       appendMemoryLog('memory_remember', 'error', detail)
       return false
     }
+  },
+
+  async extractTurn(options: ExtractTurnOptions): Promise<void> {
+    const userText = options.userText.trim()
+    const assistantText = options.assistantText.trim()
+    if (userText === '' || assistantText === '') return
+
+    const observedOn = new Date().toISOString()
+    appendMemoryLog('memory_extract', 'running')
+    try {
+      const client = await getMemoryClient()
+      const result = await client.extract({
+        messages: [
+          { role: 'user', content: userText },
+          { role: 'assistant', content: assistantText },
+        ],
+        scope: DEFAULT_SCOPE,
+        actorId: MEMORY_ACTOR_ID,
+        sessionId: options.sessionId,
+        sessionDate: observedOn,
+        observedOn,
+      })
+      const summary = extractionSummary(result)
+      storeApi.get().setLastExtraction(summary)
+      appendMemoryLog('memory_extract', 'done', summary)
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      storeApi.get().setLastExtraction(`Memory extraction failed: ${detail}`)
+      appendMemoryLog('memory_extract', 'error', detail)
+    }
+  },
+
+  async runTool(name: string, rawArgs: unknown): Promise<MemoryToolExecution> {
+    if (!isMemoryToolName(name)) {
+      throw new Error(`Unsupported memory tool: ${name}`)
+    }
+
+    const args = requireToolArgs(rawArgs)
+    appendMemoryLog(name, 'running')
+
+    if (name === 'memory_recall') {
+      const query = stringArg(args, 'query')
+      const topK = optionalPositiveIntArg(args, 'topK', MEMORY_PRECONTEXT.TOP_K, MAX_TOOL_RECALL_HITS)
+      const client = await getMemoryClient()
+      const hits = (await client.recall({
+        query,
+        topK,
+        scope: DEFAULT_SCOPE,
+        actorId: MEMORY_ACTOR_ID,
+      })).map(toRecallHit)
+      storeApi.get().setRecentRecall(hits)
+      const content = recallSummary(hits)
+      appendMemoryLog(name, 'done', `${hits.length} result${hits.length === 1 ? '' : 's'}`)
+      return { content, result: hits }
+    }
+
+    if (name === 'memory_list') {
+      const limit = optionalPositiveIntArg(args, 'limit', MAX_LIST_NOTES, MAX_LIST_NOTES)
+      const client = await getMemoryClient()
+      const memoryNotes = await listMemoryNoteSummaries(client)
+      updateMemoryNotesReady(memoryNotes)
+      const notes = memoryNotes.slice(0, limit)
+      const content = notes.length === 0
+        ? 'There are no stored memories yet.'
+        : notes.map((note, index) => `${index + 1}. ${note.name} (${note.path})`).join('\n')
+      appendMemoryLog(name, 'done', `${notes.length} note${notes.length === 1 ? '' : 's'}`)
+      return { content, result: notes }
+    }
+
+    if (name === 'memory_remember') {
+      const content = stringArg(args, 'content')
+      const title = optionalStringArg(args, 'name')
+      const tags = optionalStringArrayArg(args, 'tags')
+      const noteName = await rememberMemory(content, title, tags)
+      const message = `Remembered: ${noteName}`
+      storeApi.get().setLastExtraction(message)
+      appendMemoryLog(name, 'done', noteName)
+      return { content: message, result: { name: noteName } }
+    }
+
+    const client = await getMemoryClient()
+    const path = await resolveManagedMemoryPath(client, stringArg(args, 'path'))
+    await client.forget(toPath(path))
+    await refreshMemoryNotesAfterDelete(client, path)
+    const message = `Forgot memory: ${path}`
+    appendMemoryLog(name, 'done', path)
+    return { content: message, result: { path } }
   },
 }

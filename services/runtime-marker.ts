@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import type { ModelId } from '../store/slices/inference'
 
 const RUNTIME_MARKER_KEY = 'jeff-phone:runtime-marker'
+const SIMULATOR_MULTIMODAL_GPU_AUTO_DISABLED_KEY = 'jeff-phone:simulator-multimodal-gpu-auto-disabled'
 
 export type RuntimeMarkerStage = 'model-load' | 'projector-load' | 'generation'
 
@@ -28,6 +29,13 @@ export const clearRuntimeMarker = async (): Promise<void> => {
   await AsyncStorage.removeItem(RUNTIME_MARKER_KEY)
 }
 
+export const disableSimulatorMultimodalGpu = async (): Promise<void> => {
+  await AsyncStorage.setItem(SIMULATOR_MULTIMODAL_GPU_AUTO_DISABLED_KEY, 'true')
+}
+
+export const isSimulatorMultimodalGpuAutoDisabled = async (): Promise<boolean> =>
+  (await AsyncStorage.getItem(SIMULATOR_MULTIMODAL_GPU_AUTO_DISABLED_KEY)) === 'true'
+
 export const readRuntimeMarker = async (): Promise<RuntimeMarker | null> => {
   const raw = await AsyncStorage.getItem(RUNTIME_MARKER_KEY)
   if (raw === null) return null
@@ -49,7 +57,7 @@ export const readRuntimeMarker = async (): Promise<RuntimeMarker | null> => {
 
 export const describeRuntimeMarker = (marker: RuntimeMarker): string => {
   if (marker.stage === 'projector-load') {
-    return 'The app previously stopped while loading the multimodal projector. Retry, or use Gemma 4 E2B on the simulator.'
+    return 'The app previously stopped while loading the multimodal projector. Simulator projector GPU has been disabled for this install.'
   }
   if (marker.stage === 'generation') {
     return 'The app previously stopped during local generation. Retry with a shorter prompt or the smaller model.'
