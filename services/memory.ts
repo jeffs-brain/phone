@@ -31,9 +31,10 @@ import { appleIntelligenceService } from './apple-intelligence'
 const MEMORY_ACTOR_ID = process.env.EXPO_PUBLIC_MEMORY_ACTOR_ID?.trim() || 'local-user'
 const DEFAULT_SCOPE: Scope = 'global'
 const HASH_EMBEDDING_DIM = 384
-const MAX_TOOL_RECALL_HITS = 5
+const MAX_TOOL_RECALL_HITS = 3
 const MAX_LIST_NOTES = 12
 const MEMORY_NOTE_PREVIEW_LENGTH = 180
+const MEMORY_RECALL_TEXT_LENGTH = 1_500
 const MAX_EXTRACTED_MEMORIES_PER_TURN = 3
 const MAX_IMPORT_FILE_BYTES = 64 * 1024 * 1024
 const IMPORT_CHUNK_MAX_TOKENS = 900
@@ -269,6 +270,7 @@ const MEMORY_RECALL_STOP_WORDS = new Set([
 const LOW_VALUE_MEMORY_PATTERNS: readonly RegExp[] = [
   /\bthe user (?:is )?(?:asking|asked) (?:for|about|to know)\b/i,
   /\bthe user wants to know\b/i,
+  /\binquiry\b/i,
   /\bif the user provides\b/i,
   /\bshould be remembered if\b/i,
   /\bno (?:specific )?memor(?:y|ies)\b/i,
@@ -309,6 +311,43 @@ const isLowValueMemoryText = (text: string): boolean =>
   LOW_VALUE_MEMORY_PATTERNS.some((pattern) => pattern.test(text))
 
 const isLowValueNote = (note: StoredMemoryNote): boolean => isLowValueMemoryText(memorySearchText(note))
+
+const compactMemoryText = (text: string): string =>
+  text
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim()
+
+const clippedMemoryText = (text: string): string => {
+  const compacted = compactMemoryText(text)
+  if (compacted.length <= MEMORY_RECALL_TEXT_LENGTH) return compacted
+  return `${compacted.slice(0, MEMORY_RECALL_TEXT_LENGTH - 22).trimEnd()}\n[content truncated]`
+}
+
+const uniqueMemorySections = (sections: readonly string[]): readonly string[] => {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const section of sections) {
+    const compacted = compactMemoryText(section)
+    if (compacted === '') continue
+    const key = compacted.toLocaleLowerCase('en')
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(compacted)
+  }
+  return out
+}
+
+const recallTextFromNote = (note: StoredMemoryNote, content: string): string => {
+  const noteContent = compactMemoryText(note.content) || compactMemoryText(content)
+  const sections = uniqueMemorySections([
+    note.description === '' ? '' : `Summary: ${note.description}`,
+    note.indexEntry === undefined ? '' : `Index: ${note.indexEntry}`,
+    noteContent === '' ? '' : `Content:\n${noteContent}`,
+  ])
+  return clippedMemoryText(sections.join('\n\n') || memorySearchText(note))
+}
 
 const stringArg = (args: JsonRecord, name: string): string => {
   const value = args[name]
@@ -354,12 +393,11 @@ const isMemoryToolName = (name: string): name is MemoryToolName =>
   MEMORY_TOOL_NAMES.some((toolName) => toolName === name)
 
 const toRecallHit = (hit: SdkRecallHit): RecallHit => {
-  const text = hit.note.indexEntry?.trim() || hit.note.content.trim() || hit.content.trim()
   return {
     id: String(hit.path),
     score: hit.score,
     source: hit.note.name,
-    text,
+    text: recallTextFromNote(hit.note, hit.content),
   }
 }
 
@@ -367,7 +405,7 @@ const recallHitFromNote = (note: StoredMemoryNote, score: number): RecallHit => 
   id: String(note.path),
   score,
   source: note.name,
-  text: note.indexEntry?.trim() || note.content.trim() || note.description.trim(),
+  text: recallTextFromNote(note, note.content),
 })
 
 const textPreview = (text: string | undefined): string | undefined => {

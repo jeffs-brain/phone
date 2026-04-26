@@ -66,8 +66,16 @@ describe('message helpers', () => {
       name: 'memory_recall',
       args: {},
       status: 'done',
-      result: [{ id: 'memory-1' }],
+      result: [{ id: 'memory-1', source: 'IKEA invoice' }],
     })).toEqual('Memory search done')
+
+    expect(toolCallDetail({
+      id: 'tool-1',
+      name: 'memory_recall',
+      args: {},
+      status: 'done',
+      result: [{ id: 'memory-1', source: 'IKEA invoice' }],
+    })).toEqual('1 result: IKEA invoice')
 
     expect(toolCallDetail({
       id: 'tool-1',

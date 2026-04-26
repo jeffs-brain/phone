@@ -5,7 +5,7 @@ import { isGenerationActive } from '../../lib/runtime-status'
 import { storeApi } from '../../store'
 import type { Message } from '../../store/types'
 
-import { LIVEKIT_TOKEN_ENDPOINT, LIVEKIT_VOICE } from './config'
+import { LIVEKIT_TOKEN_ENDPOINT, LIVEKIT_VOICE, liveKitTokenEndpointError } from './config'
 import { voiceRecorder } from './audio-recorder'
 import {
   decodeLiveKitVoiceEvent,
@@ -117,9 +117,9 @@ const parseTokenResponse = (value: unknown): LiveKitTokenResponse => {
 }
 
 const requestToken = async (): Promise<LiveKitTokenResponse> => {
-  if (LIVEKIT_TOKEN_ENDPOINT === undefined || LIVEKIT_TOKEN_ENDPOINT.trim() === '') {
-    throw new Error('LiveKit token endpoint is not configured.')
-  }
+  const configError = liveKitTokenEndpointError()
+  if (configError !== null) throw new Error(configError)
+  if (LIVEKIT_TOKEN_ENDPOINT === undefined) throw new Error('LiveKit token endpoint is not configured.')
 
   const response = await fetchWithTimeout(LIVEKIT_TOKEN_ENDPOINT, LIVEKIT_VOICE.CONNECT_TIMEOUT_MS)
   const body: unknown = await response.json().catch(() => null)
@@ -335,9 +335,10 @@ export const livekitVoiceSession = {
       return
     }
 
-    if (LIVEKIT_TOKEN_ENDPOINT === undefined || LIVEKIT_TOKEN_ENDPOINT.trim() === '') {
+    const configError = liveKitTokenEndpointError()
+    if (configError !== null) {
       storeApi.get().setVoiceStatus('error')
-      storeApi.get().setVoiceError('LiveKit token endpoint is missing.')
+      storeApi.get().setVoiceError(configError)
       return
     }
 

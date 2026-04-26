@@ -38,6 +38,47 @@ describe('sanitiseModelResponse', () => {
     })
   })
 
+  it('moves visible Gemma thinking prose out of visible content', () => {
+    expect(sanitiseModelResponse([
+      'Thinking Process:',
+      '1. Check memory.',
+      '2. Answer directly.',
+      '',
+      'Final Answer:',
+      'The list is in memory.',
+    ].join('\n'))).toEqual({
+      content: 'The list is in memory.',
+      thinking: 'Thinking Process:\n1. Check memory.\n2. Answer directly.',
+    })
+  })
+
+  it('handles Gemma markdown final output headings after visible thinking prose', () => {
+    expect(sanitiseModelResponse([
+      'Thinking Process:',
+      '1. Check memory.',
+      '',
+      '5. **Final Output Generation:**',
+      'You bought a lamp.',
+    ].join('\n'))).toEqual({
+      content: 'You bought a lamp.',
+      thinking: 'Thinking Process:\n1. Check memory.',
+    })
+  })
+
+  it('hides visible Gemma thinking prose when no final answer was produced', () => {
+    expect(sanitiseModelResponse('Thinking Process:\n1. Check memory.')).toEqual({
+      content: '',
+      thinking: 'Thinking Process:\n1. Check memory.',
+    })
+  })
+
+  it('holds partial visible thinking labels during streaming', () => {
+    expect(sanitiseModelResponse('Thinking Pro')).toEqual({
+      content: '',
+      thinking: '',
+    })
+  })
+
   it('keeps native reasoning content separate', () => {
     expect(sanitiseModelResponse('Final answer', 'native reasoning')).toEqual({
       content: 'Final answer',

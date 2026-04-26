@@ -14,6 +14,19 @@ const CHANNEL_CONTROL_MARKER =
   /<\|channel\|?>\s*(analysis|thought|thinking|final|response)\s*|<channel\|>|<\|message\|>|<\|start\|>\s*assistant\s*|<\|end\|>/gi
 const THINK_OPEN = '<think>'
 const THINK_CLOSE = '</think>'
+const VISIBLE_REASONING_LABELS = [
+  'Thinking Process:',
+  'Thought Process:',
+  'Internal Reasoning:',
+  'Reasoning:',
+  'Analysis:',
+  'Check Memory:',
+  'Scratchpad:',
+] as const
+const VISIBLE_REASONING_START =
+  /^\s*(?:Thinking Process|Thought Process|Internal Reasoning|Reasoning|Analysis|Check Memory|Scratchpad):\s*/i
+const FINAL_RESPONSE_MARKER =
+  /^\s*(?:\d+\.\s*)?(?:\*\*)?(?:Final Answer|Final Response|Final Output Generation|Answer|Response):(?:\*\*)?\s*/im
 
 const normaliseWhitespace = (text: string): string =>
   text
@@ -23,6 +36,12 @@ const normaliseWhitespace = (text: string): string =>
 
 const markerChannel = (value: string): ChannelKind =>
   ['final', 'response'].includes(value.toLowerCase()) ? 'final' : 'thinking'
+
+const isPotentialVisibleReasoningStart = (text: string): boolean => {
+  const trimmed = text.trimStart().toLowerCase()
+  if (trimmed === '') return false
+  return VISIBLE_REASONING_LABELS.some((label) => label.toLowerCase().startsWith(trimmed))
+}
 
 const splitChannelMarkers = (text: string): readonly ChannelSegment[] => {
   const segments: ChannelSegment[] = []
@@ -91,11 +110,33 @@ const splitThinkTags = (text: string): readonly ChannelSegment[] => {
   return segments.length === 0 ? [{ channel: 'final', text }] : segments
 }
 
+const splitVisibleReasoningLabel = (text: string): readonly ChannelSegment[] => {
+  const open = VISIBLE_REASONING_START.exec(text)
+  if (open === null) {
+    return isPotentialVisibleReasoningStart(text)
+      ? [{ channel: 'thinking', text: '' }]
+      : [{ channel: 'final', text }]
+  }
+
+  const marker = FINAL_RESPONSE_MARKER.exec(text.slice(open[0].length))
+  if (marker === null) return [{ channel: 'thinking', text }]
+
+  const finalStart = open[0].length + marker.index
+  const contentStart = finalStart + marker[0].length
+  return [
+    { channel: 'thinking', text: text.slice(0, finalStart) },
+    { channel: 'final', text: text.slice(contentStart) },
+  ]
+}
+
 const splitResponse = (text: string): SanitisedModelResponse => {
   const channelSegments = splitChannelMarkers(text)
   const expanded = channelSegments.flatMap((segment) => {
     if (segment.channel === 'thinking') return [segment]
-    return splitThinkTags(segment.text)
+    return splitThinkTags(segment.text).flatMap((nested) => {
+      if (nested.channel === 'thinking') return [nested]
+      return splitVisibleReasoningLabel(nested.text)
+    })
   })
 
   const content = expanded

@@ -18,14 +18,9 @@ export const styles = StyleSheet.create({
     flex: 1,
     paddingRight: 12,
   },
-  eyebrow: {
-    ...typography.eyebrow,
-    color: colors.text.secondary,
-  },
   title: {
     ...typography.display,
     color: colors.text.primary,
-    marginTop: 2,
   },
   headerActions: {
     alignItems: 'center',
@@ -62,14 +57,12 @@ export const styles = StyleSheet.create({
   },
   statusPill: {
     alignItems: 'center',
-    alignSelf: 'flex-start',
     backgroundColor: colors.bg.card,
     borderRadius: radius.pill,
     flexDirection: 'row',
     gap: spacing(2),
-    marginHorizontal: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     ...shadows[1],
   },
   statusDot: {
@@ -81,11 +74,6 @@ export const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.text.primary,
     flexShrink: 1,
-  },
-  statusProgressLabel: {
-    ...typography.caption,
-    color: colors.text.secondary,
-    fontWeight: '700',
   },
   statusErrorActions: {
     alignItems: 'center',
@@ -282,6 +270,41 @@ export const styles = StyleSheet.create({
   messageText: {
     ...typography.body,
     color: colors.bubble.assistant.text,
+  },
+  markdownBlockSpacing: {
+    marginTop: 8,
+  },
+  markdownHeading: {
+    fontWeight: '700',
+  },
+  markdownStrong: {
+    fontWeight: '700',
+  },
+  markdownEmphasis: {
+    fontStyle: 'italic',
+  },
+  markdownCode: {
+    backgroundColor: colors.bg.secondary,
+    borderRadius: radius.xs,
+    fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
+    fontSize: 14,
+    paddingHorizontal: 3,
+  },
+  markdownList: {
+    gap: 4,
+  },
+  markdownListItem: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+  },
+  markdownListMarker: {
+    flexShrink: 0,
+    minWidth: 20,
+    paddingRight: 6,
+    textAlign: 'right',
+  },
+  markdownListText: {
+    flex: 1,
   },
   toolCallStrip: {
     gap: 5,

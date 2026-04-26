@@ -134,6 +134,34 @@ Direct Gradium STT/TTS is the app default. The LiveKit/ai-coustics path is selec
 
 Set `EXPO_PUBLIC_VOICE_TRANSPORT=livekit-ai-coustics` or switch it in Settings. The token backend and Python agent must both be running, and physical devices should still use Expo tunnel when the Mac is on a phone hotspot.
 
+Minimal local setup:
+
+```bash
+cd backend/livekit-token
+cp .env.example .env
+# Fill LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET.
+bun install
+bun run start
+```
+
+Expose that backend with a URL the iPad can reach, for example a tunnel to `http://localhost:8787`, then set the phone app env and restart Metro:
+
+```bash
+EXPO_PUBLIC_VOICE_TRANSPORT=livekit-ai-coustics
+EXPO_PUBLIC_LIVEKIT_TOKEN_ENDPOINT=https://<token-backend-tunnel>/voice/livekit-token
+```
+
+Do not use `localhost` for `EXPO_PUBLIC_LIVEKIT_TOKEN_ENDPOINT` on a physical iPhone or iPad; it resolves to the device, not the Mac.
+
+Start the agent separately:
+
+```bash
+cd agents/voice-v2
+cp .env.example .env
+# Fill LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, GRADIUM_API_KEY.
+uv run python src/agent.py dev
+```
+
 There is no ambient-noise auto-switching yet. Direct Gradium sends the app's captured mic frames straight to Gradium STT. ai-coustics enhancement is available only on the LiveKit agent path, where the agent applies ai-coustics before Gradium STT consumes the room audio.
 
 ## Architecture

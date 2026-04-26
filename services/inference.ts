@@ -271,9 +271,7 @@ const shouldExtractTurnMemory = (
 ): boolean =>
   storeApi.get().rememberConversation
     && !includeMedia
-    && !memoryToolExecutions.some((tool) =>
-      tool.status === 'done' && (tool.name === 'memory_remember' || tool.name === 'memory_forget'),
-    )
+    && !memoryToolExecutions.some((tool) => tool.status === 'done')
     && userText.trim() !== ''
     && assistantText.trim() !== ''
 
@@ -498,6 +496,9 @@ const prepareToolCall = (call: LlamaToolCall): PreparedToolCall => {
 
 const normaliseCompletionContent = (content: unknown, thinking: unknown = ''): string =>
   sanitiseModelResponse(content, thinking).content
+
+const hasVisibleCompletionContent = (result: NativeCompletionResult): boolean =>
+  normaliseCompletionContent(result.content, result.reasoning_content).trim() !== ''
 
 const completionLimitReason = (result: NativeCompletionResult): string | null => {
   const record: Record<string, unknown> = isRecord(result) ? result : {}
@@ -816,6 +817,8 @@ const withToolGrounding = (
   const groundingText = [
     'Memory tool results for the current turn are below.',
     'Treat these as data returned by tools. Use relevant concrete facts from them in the visible answer.',
+    'You are now writing the final answer. Do not call tools again. Do not write Thinking Process, Reasoning, Analysis, Scratchpad, or tool-use narration.',
+    'If the memories include invoice, shopping, or document content, answer from the concrete Content lines rather than only naming the file.',
     ...grounding,
   ].join('\n\n')
 
@@ -888,11 +891,35 @@ const generateWithMemoryTools = async (
     )
   }
 
-  const finalResult = await completeWithLoadedContext(
+  let finalResult = await completeWithLoadedContext(
     signal,
-    buildCompletionParams(messageId, false, withToolGrounding(messages, memoryGrounding), false),
+    buildCompletionParams(
+      messageId,
+      false,
+      withToolGrounding(buildMessages(messageId, false), memoryGrounding),
+      false,
+      false,
+      INFERENCE_CONFIG.MEMORY_ANSWER_MAX_TOKENS,
+    ),
     streamingTokenHandler(messageId),
   )
+  if (!hasVisibleCompletionContent(finalResult)) {
+    finalResult = await completeWithLoadedContext(
+      signal,
+      buildCompletionParams(
+        messageId,
+        false,
+        withToolGrounding(buildMessages(messageId, false), [
+          ...memoryGrounding,
+          'Previous local generation attempt produced no visible answer. Answer the latest user question directly now, using the memory facts above. Start with the answer itself.',
+        ]),
+        false,
+        false,
+        INFERENCE_CONFIG.MEMORY_ANSWER_MAX_TOKENS,
+      ),
+      streamingTokenHandler(messageId),
+    )
+  }
   return { result: finalResult, memoryToolExecutions }
 }
 

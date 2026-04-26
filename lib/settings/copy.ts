@@ -1,5 +1,6 @@
 import { INFERENCE_CONFIG } from '../constants'
 import { ACTIVE_GENERATION_STATUSES, BUSY_MODEL_STATUSES } from '../runtime-status'
+import { liveKitTokenEndpointStatus } from '../../services/voice/config'
 import type { RuntimeDiagnostics } from '../../services/inference'
 import type { MemoryNotesStatus } from '../../store/slices/memory'
 import type { ModelId, ModelStatus } from '../../store/slices/inference'
@@ -25,7 +26,13 @@ export const PROVIDER_OPTIONS = [
 
 export const VOICE_TRANSPORT_OPTIONS = [
   { value: 'gradium-direct', label: 'Gradium Direct', detail: 'Raw app mic frames to Gradium STT with manual playback' },
-  { value: 'livekit-ai-coustics', label: 'LiveKit ai-coustics', detail: 'ai-coustics enhancement before Gradium STT via the agent' },
+  {
+    value: 'livekit-ai-coustics',
+    label: 'LiveKit ai-coustics',
+    detail: liveKitTokenEndpointStatus() === 'configured'
+      ? 'ai-coustics enhancement before Gradium STT via the agent'
+      : 'Needs EXPO_PUBLIC_LIVEKIT_TOKEN_ENDPOINT and the LiveKit agent running',
+  },
 ] as const satisfies readonly SettingsOption<VoiceTransport>[]
 
 export const voiceTransportLabel = (transport: VoiceTransport): string =>

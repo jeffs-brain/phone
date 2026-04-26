@@ -1,6 +1,27 @@
 import { randomUUID } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { AccessToken } from 'livekit-server-sdk'
+
+const loadDotEnv = () => {
+  const here = dirname(fileURLToPath(import.meta.url))
+  const envPath = resolve(here, '..', '.env')
+  if (!existsSync(envPath)) return
+
+  for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const separator = trimmed.indexOf('=')
+    if (separator === -1) continue
+    const key = trimmed.slice(0, separator).trim()
+    const value = trimmed.slice(separator + 1).trim().replace(/^['"]|['"]$/g, '')
+    if (key && process.env[key] === undefined) process.env[key] = value
+  }
+}
+
+loadDotEnv()
 
 const requiredEnv = (name) => {
   const value = process.env[name]?.trim()

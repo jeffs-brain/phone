@@ -46,7 +46,7 @@ export default function Chat() {
   const generationStatus = useStore((s) => s.generationStatus)
   const modelStatus = useStore((s) => s.modelStatus)
   const modelError = useStore((s) => s.modelError)
-  const downloadBytes = useStore((s) => s.downloadBytes)
+
   const cancelGeneration = useStore((s) => s.cancelGeneration)
   const modelSize = useStore((s) => s.modelSize)
   const setModelSize = useStore((s) => s.setModelSize)
@@ -289,19 +289,19 @@ export default function Chat() {
       style={[styles.root, { paddingTop: insets.top + 14 }]}
     >
       <ChatHeader
+        modelStatus={modelStatus}
         onNewThread={handleNewThread}
         onOpenMemories={handleOpenMemories}
         onOpenSettings={handleOpenSettings}
+        statusDotColour={statusDotColour}
+        statusPillLabel={statusPillLabel}
       />
 
       <ModelStatusBanner
-        downloadBytes={downloadBytes}
         modelError={modelError}
         modelStatus={modelStatus}
         onRetryModel={handleRetryModel}
         onUseSmallerModel={handleUseSmallerModel}
-        statusDotColour={statusDotColour}
-        statusPillLabel={statusPillLabel}
       />
 
       <ChatMessageList

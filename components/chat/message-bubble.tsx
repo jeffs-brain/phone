@@ -13,6 +13,7 @@ import { PROVIDER_LABELS } from '../../lib/chat/status-helpers'
 import { hapticButton } from '../../lib/haptics'
 import { useStore } from '../../store'
 import type { Message } from '../../store/types'
+import { MarkdownText } from './markdown-text'
 import { ThinkingDisclosure } from './thinking-disclosure'
 import { styles } from './styles'
 
@@ -135,9 +136,10 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           </View>
         )}
         {showAnswerText ? (
-          <Text style={[styles.messageText, isUser ? styles.userMessageText : null]}>
-            {displayText}
-          </Text>
+          <MarkdownText
+            text={displayText}
+            textStyle={isUser ? styles.userMessageText : null}
+          />
         ) : null}
         {message.routeDecision === undefined ? null : (
           <Text style={styles.routeDetail}>
