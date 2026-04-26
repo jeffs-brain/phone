@@ -32,7 +32,13 @@ import {
 import { appendBuffered, appendTokenData, finishStream } from './inference-stream'
 import { MEMORY_TOOL_DEFINITIONS, MemoryToolArgumentError, memoryService } from './memory'
 import { ensureModelFile, ensureProjectorFile, isModelFileCached, isProjectorFileCached } from './model-assets'
-import { clearRuntimeMarker, isMultimodalGpuAutoDisabled, writeRuntimeMarker } from './runtime-marker'
+import {
+  clearRuntimeMarker,
+  disableGemmaVision,
+  isGemmaVisionAutoDisabled,
+  isMultimodalGpuAutoDisabled,
+  writeRuntimeMarker,
+} from './runtime-marker'
 
 type LoadedContext = {
   readonly id: ModelId
@@ -833,6 +839,52 @@ const imageAnalysisText = (analysis: AppleImageAnalysis): string => {
   return [text, labels].join('\n\n')
 }
 
+const withAppleVisionGrounding = (
+  messages: readonly RNLlamaOAICompatibleMessage[],
+  analysis: AppleImageAnalysis,
+  reason: string,
+): RNLlamaOAICompatibleMessage[] => {
+  const groundingText = [
+    'Use these local Apple Vision signals from the attached image to answer the current image question.',
+    `Gemma vision route: ${reason}.`,
+    imageAnalysisText(analysis),
+    'Answer only from these image signals and the user message. Say when the image signals are insufficient.',
+  ].join('\n\n')
+
+  const first = messages[0]
+  if (first?.role === 'system' && typeof first.content === 'string') {
+    return [
+      { ...first, content: `${first.content}\n\n${groundingText}` },
+      ...messages.slice(1),
+    ]
+  }
+
+  return [{ role: 'system', content: groundingText }, ...messages]
+}
+
+const generateWithAppleVisionTextFallback = async (
+  messageId: string,
+  signal: AbortSignal,
+  reason: string,
+): Promise<GenerationOutcome> => {
+  throwIfAborted(signal)
+  const image = latestUserImage()
+  if (image === null) throw new Error('Image attachment did not reach the local vision fallback.')
+
+  storeApi.get()._setGenerationStatus('preparing-vision')
+  const analysis = await appleIntelligenceService.analyseImage(image.uri)
+  throwIfAborted(signal)
+
+  const messages = withAppleVisionGrounding(buildMessages(messageId, false), analysis, reason)
+  const result = await completeWithLoadedContext(
+    signal,
+    buildCompletionParams(messageId, false, messages, false),
+    streamingTokenHandler(messageId),
+  )
+
+  return { result, memoryToolExecutions: [] }
+}
+
 const generateWithAppleFoundation = async (
   messageId: string,
   signal: AbortSignal,
@@ -1108,13 +1160,20 @@ export const inferenceService = {
         )
       }
 
-      const includeMedia = INFERENCE_CONFIG.MULTIMODAL_GENERATION_ENABLED && turnRequiresMedia
+      const gemmaVisionAutoDisabled = turnRequiresMedia
+        ? await isGemmaVisionAutoDisabled().catch(() => false)
+        : false
+      const includeMedia = INFERENCE_CONFIG.MULTIMODAL_GENERATION_ENABLED
+        && turnRequiresMedia
+        && !gemmaVisionAutoDisabled
       if (turnRequiresMedia && !includeMedia) {
-        appendBuffered(opts.messageId, SIMULATOR_VISION_DISABLED_MESSAGE)
-        finishStream(opts.messageId)
-        state.commitStreamingMessage(opts.messageId)
-        state._setGenerationStatus('done')
-        return
+        if (!gemmaVisionAutoDisabled) {
+          appendBuffered(opts.messageId, SIMULATOR_VISION_DISABLED_MESSAGE)
+          finishStream(opts.messageId)
+          state.commitStreamingMessage(opts.messageId)
+          state._setGenerationStatus('done')
+          return
+        }
       }
 
       const targetModel = generationModelId(storeApi.get().modelSize, includeMedia)
@@ -1126,12 +1185,23 @@ export const inferenceService = {
         throwIfAborted(opts.signal)
       }
 
-      const outcome = !includeMedia
-        ? await generateWithMemoryTools(opts.messageId, opts.signal)
-        : {
-            result: await generateWithLoadedContext(opts.messageId, opts.signal, includeMedia),
+      let outcome: GenerationOutcome
+      if (!turnRequiresMedia) {
+        outcome = await generateWithMemoryTools(opts.messageId, opts.signal)
+      } else if (!includeMedia) {
+        outcome = await generateWithAppleVisionTextFallback(opts.messageId, opts.signal, 'disabled after previous projector crash')
+      } else {
+        try {
+          outcome = {
+            result: await generateWithLoadedContext(opts.messageId, opts.signal, true),
             memoryToolExecutions: [],
           }
+        } catch (error) {
+          if (opts.signal.aborted) throw error
+          await disableGemmaVision()
+          outcome = await generateWithAppleVisionTextFallback(opts.messageId, opts.signal, 'projector initialisation failed')
+        }
+      }
       const result = outcome.result
       const { content, thinking } = normaliseCompletionResult(result)
       finishStream(opts.messageId)

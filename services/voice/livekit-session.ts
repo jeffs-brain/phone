@@ -1,6 +1,5 @@
-import { AudioSession } from '@livekit/react-native'
-import { Room, RoomEvent } from 'livekit-client'
-import type { RemoteParticipant } from 'livekit-client'
+import type { AudioSession } from '@livekit/react-native'
+import type { RemoteParticipant, Room } from 'livekit-client'
 
 import { isGenerationActive } from '../../lib/runtime-status'
 import { storeApi } from '../../store'
@@ -24,6 +23,8 @@ type LiveKitTokenResponse = {
 
 type ActiveLiveKitTurn = {
   readonly room: Room
+  readonly audioSession: typeof AudioSession
+  readonly roomEvent: typeof import('livekit-client')['RoomEvent']
   readonly startedAt: number
   readonly onDataReceived: (
     payload: Uint8Array,
@@ -40,9 +41,15 @@ type ActiveLiveKitTurn = {
 }
 
 type JsonRecord = Record<string, unknown>
+type LiveKitModules = {
+  readonly AudioSession: typeof AudioSession
+  readonly Room: typeof import('livekit-client')['Room']
+  readonly RoomEvent: typeof import('livekit-client')['RoomEvent']
+}
 
 let activeTurn: ActiveLiveKitTurn | null = null
 let liveKitTurnSequence = 0
+let liveKitModulesPromise: Promise<LiveKitModules> | null = null
 
 const isRecord = (value: unknown): value is JsonRecord =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -54,6 +61,35 @@ const normaliseTranscript = (text: string): string => text.replace(/\s+/g, ' ').
 
 const errorDetail = (error: unknown, fallback: string): string =>
   error instanceof Error ? error.message : fallback
+
+const loadLiveKitModules = async (): Promise<LiveKitModules> => {
+  liveKitModulesPromise ??= Promise.all([
+    import('@livekit/react-native'),
+    import('livekit-client'),
+  ])
+    .then(([nativeModule, clientModule]) => {
+      nativeModule.registerGlobals()
+      return {
+        AudioSession: nativeModule.AudioSession,
+        Room: clientModule.Room,
+        RoomEvent: clientModule.RoomEvent,
+      }
+    })
+    .catch((error: unknown) => {
+      liveKitModulesPromise = null
+      throw new Error(
+        `LiveKit native voice is not available in this dev client. Rebuild and reinstall the app after pod install. ${errorDetail(error, '')}`.trim(),
+      )
+    })
+
+  return liveKitModulesPromise
+}
+
+const stopAudioSessionIfLoaded = async (): Promise<void> => {
+  if (liveKitModulesPromise === null) return
+  const modules = await liveKitModulesPromise.catch(() => null)
+  await modules?.AudioSession.stopAudioSession().catch(() => undefined)
+}
 
 const fetchWithTimeout = async (url: string, timeoutMs: number): Promise<Response> => {
   const controller = new AbortController()
@@ -148,14 +184,14 @@ const cleanupTurn = async (turn: ActiveLiveKitTurn, nextStatus: 'idle' | 'error'
   if (turn.closing) return
   turn.closing = true
   turn.resolveSpeechDone()
-  turn.room.off(RoomEvent.DataReceived, turn.onDataReceived)
-  turn.room.off(RoomEvent.Disconnected, turn.onDisconnected)
+  turn.room.off(turn.roomEvent.DataReceived, turn.onDataReceived)
+  turn.room.off(turn.roomEvent.Disconnected, turn.onDisconnected)
 
   try {
     await turn.room.localParticipant.setMicrophoneEnabled(false).catch(() => undefined)
     await turn.room.disconnect(true).catch(() => undefined)
   } finally {
-    await AudioSession.stopAudioSession().catch(() => undefined)
+    await turn.audioSession.stopAudioSession().catch(() => undefined)
     if (activeTurn === turn) activeTurn = null
     storeApi.get().setRecording(false)
     storeApi.get().setVadInactivity(null)
@@ -171,7 +207,7 @@ const cleanupTurn = async (turn: ActiveLiveKitTurn, nextStatus: 'idle' | 'error'
 const failTurn = async (turn: ActiveLiveKitTurn | null, detail: string): Promise<void> => {
   if (turn?.closing === true) return
   if (turn !== null) await cleanupTurn(turn, 'error')
-  else await AudioSession.stopAudioSession().catch(() => undefined)
+  else await stopAudioSessionIfLoaded()
 
   storeApi.get().setRecording(false)
   storeApi.get().setVoiceStatus('error')
@@ -214,7 +250,11 @@ const handleFinalTranscript = async (turn: ActiveLiveKitTurn, text: string): Pro
   }
 }
 
-const createTurn = (room: Room): ActiveLiveKitTurn => {
+const createTurn = (
+  room: Room,
+  audioSession: typeof AudioSession,
+  roomEvent: typeof import('livekit-client')['RoomEvent'],
+): ActiveLiveKitTurn => {
   let resolveSpeechDone: () => void = () => undefined
   const speechDone = new Promise<void>((resolve) => {
     resolveSpeechDone = resolve
@@ -222,6 +262,8 @@ const createTurn = (room: Room): ActiveLiveKitTurn => {
 
   const turn: ActiveLiveKitTurn = {
     room,
+    audioSession,
+    roomEvent,
     startedAt: Date.now(),
     onDataReceived: (payload, _participant, _kind, topic) => {
       if (topic !== LIVEKIT_VOICE_TOPIC) return
@@ -320,11 +362,20 @@ export const livekitVoiceSession = {
     }
 
     storeApi.get().setVoiceStatus('connecting')
-    const room = new Room()
-    const turn = createTurn(room)
+    let modules: LiveKitModules
+    try {
+      modules = await loadLiveKitModules()
+    } catch (error) {
+      storeApi.get().setVoiceStatus('error')
+      storeApi.get().setVoiceError(errorDetail(error, 'LiveKit native voice is not available in this dev client.'))
+      return
+    }
+
+    const room = new modules.Room()
+    const turn = createTurn(room, modules.AudioSession, modules.RoomEvent)
     activeTurn = turn
-    room.on(RoomEvent.DataReceived, turn.onDataReceived)
-    room.on(RoomEvent.Disconnected, turn.onDisconnected)
+    room.on(modules.RoomEvent.DataReceived, turn.onDataReceived)
+    room.on(modules.RoomEvent.Disconnected, turn.onDisconnected)
 
     try {
       const token = await requestToken()
@@ -333,7 +384,7 @@ export const livekitVoiceSession = {
         return
       }
 
-      await AudioSession.startAudioSession()
+      await modules.AudioSession.startAudioSession()
       if (turnWasSuperseded(turn, sequence)) {
         await cleanupTurn(turn)
         return
@@ -388,7 +439,7 @@ export const livekitVoiceSession = {
     liveKitTurnSequence += 1
     const turn = activeTurn
     if (turn === null) {
-      await AudioSession.stopAudioSession().catch(() => undefined)
+      await stopAudioSessionIfLoaded()
       storeApi.get().setVoiceStatus('idle')
       storeApi.get().setVoiceError(null)
       return
