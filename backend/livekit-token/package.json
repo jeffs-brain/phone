@@ -1,0 +1,12 @@
+{
+  "name": "jeff-livekit-token",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.mjs"
+  },
+  "dependencies": {
+    "livekit-server-sdk": "2.15.1"
+  }
+}

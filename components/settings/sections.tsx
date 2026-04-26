@@ -2,8 +2,9 @@ import { Text, View } from 'react-native'
 
 import type { RuntimeDiagnostics } from '../../services/inference'
 import type { MemoryNotesStatus } from '../../store/slices/memory'
+import type { NetworkStatus } from '../../store/slices/network'
 import type { ModelId, ModelStatus } from '../../store/slices/inference'
-import type { ProviderMode } from '../../store/slices/settings'
+import type { ProviderMode, VoiceTransport } from '../../store/slices/settings'
 import type { GenerationStatus, ProviderId } from '../../store/types'
 import {
   formatStatusValue,
@@ -15,6 +16,7 @@ import {
   PROVIDER_OPTIONS,
   runtimeProfileLabel,
   textGpuDiagnostic,
+  VOICE_TRANSPORT_OPTIONS,
   visionGpuDiagnostic,
 } from '../../lib/settings/copy'
 import {
@@ -33,6 +35,12 @@ const PROVIDER_MODE_OPTIONS = [
   { value: 'manual', label: '🔧 Manual' },
   { value: 'smart', label: '🤖 Smart' },
 ] as const satisfies readonly SegmentOption<ProviderMode>[]
+
+const networkStatusLabel = (status: NetworkStatus): string => {
+  if (status === 'online') return 'Online'
+  if (status === 'offline') return 'Offline'
+  return 'Unknown'
+}
 
 export function ModelSettingsSection({
   modelSize,
@@ -176,16 +184,27 @@ export function MemorySettingsSection({
 export function ProviderSettingsSection({
   providerMode,
   manualProvider,
+  networkStatus,
+  networkType,
   onSelectProviderMode,
   onSelectManualProvider,
 }: {
   readonly providerMode: ProviderMode
   readonly manualProvider: ProviderId
+  readonly networkStatus: NetworkStatus
+  readonly networkType: string | null
   readonly onSelectProviderMode: (mode: ProviderMode) => void
   readonly onSelectManualProvider: (provider: ProviderId) => void
 }) {
+  const networkDetail = networkType === null ? undefined : networkType
+  const routeDetail = networkStatus === 'offline'
+    ? 'Offline: Smart and cloud routes stay on-device.'
+    : 'Online: Smart routing can use Fastino and cloud routes when configured.'
+
   return (
     <SettingsSection title="🔀 Provider">
+      <DiagnosticRow label="Network" value={networkStatusLabel(networkStatus)} detail={networkDetail} />
+      <DiagnosticRow label="Routing guard" value={routeDetail} />
       <SegmentedControl
         options={PROVIDER_MODE_OPTIONS}
         selectedValue={providerMode}
@@ -208,22 +227,26 @@ export function ProviderSettingsSection({
 
 export function ConversationSettingsSection({
   voiceEnabled,
+  voiceTransport,
+  voiceTransportBusy,
   thinkingEnabled,
   rememberConversation,
   devMode,
-  generationBusy,
   onVoiceEnabledChange,
+  onVoiceTransportChange,
   onThinkingEnabledChange,
   onRememberConversationChange,
   onDevModeChange,
   onStartNewThread,
 }: {
   readonly voiceEnabled: boolean
+  readonly voiceTransport: VoiceTransport
+  readonly voiceTransportBusy: boolean
   readonly thinkingEnabled: boolean
   readonly rememberConversation: boolean
   readonly devMode: boolean
-  readonly generationBusy: boolean
   readonly onVoiceEnabledChange: (enabled: boolean) => void
+  readonly onVoiceTransportChange: (transport: VoiceTransport) => void
   readonly onThinkingEnabledChange: (enabled: boolean) => void
   readonly onRememberConversationChange: (enabled: boolean) => void
   readonly onDevModeChange: (enabled: boolean) => void
@@ -233,10 +256,21 @@ export function ConversationSettingsSection({
     <SettingsSection title="💬 Conversation">
       <ToggleRow
         label="Voice"
-        detail="Mic uses Gradium STT; assistant replies can be played from each message"
+        detail="Mic input is available from the composer; message playback stays manual"
         value={voiceEnabled}
         onValueChange={onVoiceEnabledChange}
       />
+      {VOICE_TRANSPORT_OPTIONS.map((option) => (
+        <OptionButton
+          key={option.value}
+          value={option.value}
+          label={option.label}
+          detail={option.detail}
+          selected={voiceTransport === option.value}
+          onSelect={onVoiceTransportChange}
+          disabled={!voiceEnabled || voiceTransportBusy}
+        />
+      ))}
       <ToggleRow
         label="Thinking"
         detail="Allows Gemma to spend extra reasoning tokens before answering. Leave off for faster demo replies."
@@ -255,7 +289,7 @@ export function ConversationSettingsSection({
         value={devMode}
         onValueChange={onDevModeChange}
       />
-      <ActionButton label="✨ New chat" onPress={onStartNewThread} muted disabled={generationBusy} />
+      <ActionButton label="✨ New chat" onPress={onStartNewThread} muted />
     </SettingsSection>
   )
 }

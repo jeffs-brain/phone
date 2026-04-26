@@ -79,9 +79,9 @@ export const shadows: Record<0 | 1 | 2 | 3, ViewStyle> = {
 export const spacing = (n: number): number => n * 4
 
 export const typography: Record<string, TextStyle> = {
-  display: { fontSize: 34, fontWeight: '700', lineHeight: 40, letterSpacing: -0.5 },
-  heading: { fontSize: 22, fontWeight: '700', lineHeight: 28, letterSpacing: -0.3 },
-  subheading: { fontSize: 17, fontWeight: '600', lineHeight: 22, letterSpacing: -0.2 },
+  display: { fontSize: 34, fontWeight: '700', lineHeight: 40, letterSpacing: 0 },
+  heading: { fontSize: 22, fontWeight: '700', lineHeight: 28, letterSpacing: 0 },
+  subheading: { fontSize: 17, fontWeight: '600', lineHeight: 22, letterSpacing: 0 },
   body: { fontSize: 15, fontWeight: '400', lineHeight: 22 },
   bodyBold: { fontSize: 15, fontWeight: '600', lineHeight: 22 },
   caption: { fontSize: 13, fontWeight: '500', lineHeight: 18 },

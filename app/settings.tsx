@@ -30,7 +30,11 @@ export default function Settings() {
   const generationStatus = useStore((s) => s.generationStatus)
   const providerMode = useStore((s) => s.providerMode)
   const manualProvider = useStore((s) => s.manualProvider)
+  const networkStatus = useStore((s) => s.networkStatus)
+  const networkType = useStore((s) => s.networkType)
   const voiceEnabled = useStore((s) => s.voiceEnabled)
+  const voiceTransport = useStore((s) => s.voiceTransport)
+  const voiceStatus = useStore((s) => s.voiceStatus)
   const thinkingEnabled = useStore((s) => s.thinkingEnabled)
   const rememberConversation = useStore((s) => s.rememberConversation)
   const devMode = useStore((s) => s.devMode)
@@ -42,14 +46,17 @@ export default function Settings() {
   const setProviderMode = useStore((s) => s.setProviderMode)
   const setManualProvider = useStore((s) => s.setManualProvider)
   const setVoiceEnabled = useStore((s) => s.setVoiceEnabled)
+  const setVoiceTransport = useStore((s) => s.setVoiceTransport)
   const setThinkingEnabled = useStore((s) => s.setThinkingEnabled)
   const setRememberConversation = useStore((s) => s.setRememberConversation)
   const setDevMode = useStore((s) => s.setDevMode)
   const loadModel = useStore((s) => s.loadModel)
   const unloadModel = useStore((s) => s.unloadModel)
   const startNewThread = useStore((s) => s.startNewThread)
+  const cancelGeneration = useStore((s) => s.cancelGeneration)
   const modelBusy = BUSY_MODEL_STATUSES.includes(modelStatus)
   const generationBusy = ACTIVE_GENERATION_STATUSES.includes(generationStatus)
+  const voiceTransportBusy = voiceStatus !== 'idle' && voiceStatus !== 'error'
   const [projectorGpuAutoDisabled, setProjectorGpuAutoDisabled] = useState<boolean | null>(null)
   const [projectorGpuGuardBusy, setProjectorGpuGuardBusy] = useState(false)
   const [projectorGpuGuardError, setProjectorGpuGuardError] = useState<string | null>(null)
@@ -107,10 +114,10 @@ export default function Settings() {
   }, [])
 
   const handleStartNewThread = useCallback(() => {
-    if (generationBusy) return
+    cancelGeneration()
     startNewThread()
     router.replace('/')
-  }, [generationBusy, router, startNewThread])
+  }, [cancelGeneration, router, startNewThread])
 
   const handleOpenMemories = useCallback(() => {
     router.push('/memories')
@@ -184,20 +191,24 @@ export default function Settings() {
       <ProviderSettingsSection
         providerMode={providerMode}
         manualProvider={manualProvider}
+        networkStatus={networkStatus}
+        networkType={networkType}
         onSelectProviderMode={setProviderMode}
         onSelectManualProvider={setManualProvider}
       />
 
       <ConversationSettingsSection
         voiceEnabled={voiceEnabled}
+        voiceTransport={voiceTransport}
+        voiceTransportBusy={voiceTransportBusy}
         thinkingEnabled={thinkingEnabled}
         rememberConversation={rememberConversation}
         devMode={devMode}
         onVoiceEnabledChange={setVoiceEnabled}
+        onVoiceTransportChange={setVoiceTransport}
         onThinkingEnabledChange={setThinkingEnabled}
         onRememberConversationChange={setRememberConversation}
         onDevModeChange={setDevMode}
-        generationBusy={generationBusy}
         onStartNewThread={handleStartNewThread}
       />
     </ScrollView>

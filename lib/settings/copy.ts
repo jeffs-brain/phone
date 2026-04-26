@@ -1,7 +1,10 @@
 import { INFERENCE_CONFIG } from '../constants'
+import { ACTIVE_GENERATION_STATUSES, BUSY_MODEL_STATUSES } from '../runtime-status'
+import { liveKitTokenEndpointStatus } from '../../services/voice/config'
 import type { RuntimeDiagnostics } from '../../services/inference'
 import type { MemoryNotesStatus } from '../../store/slices/memory'
 import type { ModelId, ModelStatus } from '../../store/slices/inference'
+import type { VoiceTransport } from '../../store/slices/settings'
 import type { GenerationStatus, ProviderId } from '../../store/types'
 
 export type SettingsOption<T extends string> = {
@@ -17,30 +20,25 @@ export const MODEL_OPTIONS = [
 
 export const PROVIDER_OPTIONS = [
   { value: 'gemma-local', label: 'Local Gemma', detail: 'Default private path' },
-  { value: 'apple-fm', label: 'Apple FM', detail: 'Planned iOS 26 provider' },
-  { value: 'cloud', label: 'Cloud', detail: 'OpenAI-compatible large-tier fallback' },
+  { value: 'apple-fm', label: 'Apple FM', detail: 'On-device Apple Foundation Models when available' },
+  { value: 'cloud', label: 'Cloud', detail: 'Gemini large-tier route when configured' },
 ] as const satisfies readonly SettingsOption<ProviderId>[]
 
-export const BUSY_MODEL_STATUSES: readonly ModelStatus[] = [
-  'checking',
-  'downloading',
-  'verifying',
-  'loaded',
-  'initialised',
-]
+export const VOICE_TRANSPORT_OPTIONS = [
+  { value: 'gradium-direct', label: 'Gradium Direct', detail: 'Raw app mic frames to Gradium STT with manual playback' },
+  {
+    value: 'livekit-ai-coustics',
+    label: 'LiveKit ai-coustics',
+    detail: liveKitTokenEndpointStatus() === 'configured'
+      ? 'ai-coustics enhancement before Gradium STT via the agent'
+      : 'Needs EXPO_PUBLIC_LIVEKIT_TOKEN_ENDPOINT and the LiveKit agent running',
+  },
+] as const satisfies readonly SettingsOption<VoiceTransport>[]
 
-export const ACTIVE_GENERATION_STATUSES: readonly GenerationStatus[] = [
-  'routing',
-  'preparing-vision',
-  'checking-vision',
-  'downloading-vision',
-  'verifying-vision',
-  'initialising-vision',
-  'loading-first-token',
-  'thinking',
-  'using-tools',
-  'streaming',
-]
+export const voiceTransportLabel = (transport: VoiceTransport): string =>
+  VOICE_TRANSPORT_OPTIONS.find((option) => option.value === transport)?.label ?? transport
+
+export { ACTIVE_GENERATION_STATUSES, BUSY_MODEL_STATUSES }
 
 export const modelLabel = (id: ModelId): string =>
   MODEL_OPTIONS.find((option) => option.value === id)?.label ?? id
@@ -150,7 +148,7 @@ export const friendlyModelError = (error: string): string => {
     return 'There is not enough local storage for this model.'
   }
   if (normalised.includes('simulator projector gpu')) {
-    return 'Simulator projector GPU crashed. CPU vision fallback is enabled for this install.'
+    return 'Simulator projector GPU crashed. CPU vision route is enabled for this install.'
   }
   if (normalised.includes('projector') || normalised.includes('initialise')) {
     return 'Native model initialisation failed. Try Gemma 4 E2B, then reload.'

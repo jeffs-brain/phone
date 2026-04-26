@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import * as DocumentPicker from 'expo-document-picker'
 import { useRouter } from 'expo-router'
 import { Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -21,6 +22,7 @@ export default function Memories() {
   const router = useRouter()
   const [expandedPath, setExpandedPath] = useState<string | null>(null)
   const [deletingPath, setDeletingPath] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const memoryNotes = useStore((s) => s.memoryNotes)
   const memoryNotesStatus = useStore((s) => s.memoryNotesStatus)
@@ -45,6 +47,43 @@ export default function Memories() {
   const handleTidy = useCallback(() => {
     void memoryService.consolidateMemories()
   }, [])
+
+  const handleImport = useCallback(() => {
+    if (importing || loading) return
+
+    setImporting(true)
+    void (async () => {
+      const result = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        multiple: false,
+        type: [
+          'application/pdf',
+          'text/*',
+          'text/markdown',
+          'application/json',
+          'application/xml',
+          'application/yaml',
+          'application/x-yaml',
+        ],
+      })
+      if (result.canceled) return
+
+      const asset = result.assets[0]
+      if (asset === undefined) return
+
+      const imported = await memoryService.importDocument({
+        uri: asset.uri,
+        name: asset.name,
+        ...(asset.mimeType === undefined ? {} : { mimeType: asset.mimeType }),
+        ...(asset.size === undefined ? {} : { size: asset.size }),
+      })
+      if (imported === null) return
+      Alert.alert(
+        'Imported document',
+        `${imported.title}\n\n${imported.noteCount} searchable chunk${imported.noteCount === 1 ? '' : 's'} added to Jeff's brain.`,
+      )
+    })().finally(() => setImporting(false))
+  }, [importing, loading])
 
   const handleToggle = useCallback((path: string) => {
     setExpandedPath((current) => current === path ? null : path)
@@ -95,6 +134,12 @@ export default function Memories() {
       <View style={styles.actionRow}>
         <HeaderButton label={loading ? '🔄 Refreshing' : '🔄 Refresh'} onPress={handleRefresh} muted disabled={loading} />
         <HeaderButton label="🧹 Tidy" onPress={handleTidy} muted disabled={loading || memoryNotes.length < 2} />
+        <HeaderButton
+          label={importing ? '📥 Importing' : '📥 Import'}
+          onPress={handleImport}
+          muted
+          disabled={loading || importing}
+        />
       </View>
 
       {lastExtractionSummary === null ? null : (
@@ -187,6 +232,7 @@ const styles = StyleSheet.create({
   },
   actionRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
     marginBottom: 12,
   },

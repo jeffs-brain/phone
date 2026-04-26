@@ -45,11 +45,13 @@ export default function Chat() {
   const clearStaged = useStore((s) => s.clearStaged)
   const generationStatus = useStore((s) => s.generationStatus)
   const modelStatus = useStore((s) => s.modelStatus)
-  const downloadBytes = useStore((s) => s.downloadBytes)
+  const modelError = useStore((s) => s.modelError)
+
   const cancelGeneration = useStore((s) => s.cancelGeneration)
   const modelSize = useStore((s) => s.modelSize)
   const setModelSize = useStore((s) => s.setModelSize)
   const voiceEnabled = useStore((s) => s.voiceEnabled)
+  const voiceTransport = useStore((s) => s.voiceTransport)
   const voiceStatus = useStore((s) => s.voiceStatus)
   const asrPartial = useStore((s) => s.asrPartial)
   const voiceError = useStore((s) => s.voiceError)
@@ -57,6 +59,7 @@ export default function Chat() {
   const stopRecording = useStore((s) => s.stopRecording)
   const cancelVoice = useStore((s) => s.cancelVoice)
   const stopSpeech = useStore((s) => s.stopSpeech)
+  const networkStatus = useStore((s) => s.networkStatus)
 
   const generationActive = isGenerationActive(generationStatus)
   const voiceBusy = VOICE_BUSY_STATUSES.includes(voiceStatus)
@@ -72,7 +75,9 @@ export default function Chat() {
   const statusDotColour = STATUS_DOT_COLOURS[modelStatus]
   const statusPillLabel = generationActive
     ? `${MODEL_STATUS_LABELS[modelStatus]} \u00B7 ${GENERATION_STATUS_LABELS[generationStatus].toLowerCase()}`
-    : MODEL_STATUS_LABELS[modelStatus]
+    : networkStatus === 'offline'
+      ? `${MODEL_STATUS_LABELS[modelStatus]} \u00B7 local only`
+      : MODEL_STATUS_LABELS[modelStatus]
 
   useEffect(() => {
     if (storeHydrated) return undefined
@@ -241,10 +246,10 @@ export default function Chat() {
   }, [router])
 
   const handleNewThread = useCallback(() => {
-    if (generationActive) return
     hapticButton()
     const start = (): void => {
       setActionError(null)
+      cancelGeneration()
       startNewThread()
     }
     if (messages.length === 0) {
@@ -259,7 +264,7 @@ export default function Chat() {
         { text: 'New chat', style: 'destructive', onPress: start },
       ],
     )
-  }, [generationActive, messages.length, startNewThread])
+  }, [cancelGeneration, messages.length, startNewThread])
 
   const handleRetryModel = useCallback(() => {
     setActionError(null)
@@ -284,19 +289,19 @@ export default function Chat() {
       style={[styles.root, { paddingTop: insets.top + 14 }]}
     >
       <ChatHeader
-        generationActive={generationActive}
+        modelStatus={modelStatus}
         onNewThread={handleNewThread}
         onOpenMemories={handleOpenMemories}
         onOpenSettings={handleOpenSettings}
+        statusDotColour={statusDotColour}
+        statusPillLabel={statusPillLabel}
       />
 
       <ModelStatusBanner
-        downloadBytes={downloadBytes}
+        modelError={modelError}
         modelStatus={modelStatus}
         onRetryModel={handleRetryModel}
         onUseSmallerModel={handleUseSmallerModel}
-        statusDotColour={statusDotColour}
-        statusPillLabel={statusPillLabel}
       />
 
       <ChatMessageList
@@ -324,6 +329,7 @@ export default function Chat() {
         voiceCanPress={voiceCanPress}
         voiceError={voiceError}
         voiceStatus={voiceStatus}
+        voiceTransport={voiceTransport}
         voiceTranscript={voiceTranscript}
       />
     </KeyboardAvoidingView>

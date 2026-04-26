@@ -60,6 +60,13 @@ const TOOL_NAMES: Record<string, string> = {
 const isRecord = (value: unknown): value is JsonRecord =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+const recordString = (value: JsonRecord, key: string): string | null => {
+  const raw = value[key]
+  if (typeof raw !== 'string') return null
+  const trimmed = raw.trim()
+  return trimmed === '' ? null : trimmed
+}
+
 const toolStatus = (toolCall: ToolCall): string => {
   if (toolCall.status === 'done') return 'done'
   if (toolCall.status === 'error') return 'failed'
@@ -77,14 +84,20 @@ export const toolCallDetail = (toolCall: ToolCall): string | null => {
   if (toolCall.result === undefined) return null
 
   if (Array.isArray(toolCall.result)) {
-    return `${toolCall.result.length} result${toolCall.result.length === 1 ? '' : 's'}`
+    const count = `${toolCall.result.length} result${toolCall.result.length === 1 ? '' : 's'}`
+    const sources = toolCall.result
+      .filter(isRecord)
+      .map((result) => recordString(result, 'source') ?? recordString(result, 'name') ?? recordString(result, 'id'))
+      .filter((source): source is string => source !== null)
+      .slice(0, 2)
+    return sources.length === 0 ? count : `${count}: ${sources.join(', ')}`
   }
 
   if (isRecord(toolCall.result)) {
-    const name = toolCall.result.name
-    if (typeof name === 'string' && name.trim() !== '') return name
-    const path = toolCall.result.path
-    if (typeof path === 'string' && path.trim() !== '') return path
+    const name = recordString(toolCall.result, 'name')
+    if (name !== null) return name
+    const path = recordString(toolCall.result, 'path')
+    if (path !== null) return path
   }
 
   return null

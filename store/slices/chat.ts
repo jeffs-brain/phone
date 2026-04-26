@@ -1,19 +1,7 @@
 import { createId } from '../../lib/id'
+import { ACTIVE_GENERATION_STATUSES } from '../../lib/runtime-status'
 import { routerService } from '../../services/router'
-import type { ContentPart, GenerationStatus, Message, RouteDecision, Slice, ToolCall } from '../types'
-
-const ACTIVE_GENERATION_STATUSES: readonly GenerationStatus[] = [
-  'routing',
-  'preparing-vision',
-  'checking-vision',
-  'downloading-vision',
-  'verifying-vision',
-  'initialising-vision',
-  'loading-first-token',
-  'thinking',
-  'using-tools',
-  'streaming',
-]
+import type { ContentPart, Message, RouteDecision, Slice, ToolCall } from '../types'
 
 export type SendUserMessageInput = {
   readonly text?: string
@@ -105,12 +93,17 @@ export const createChatSlice: Slice<ChatSlice> = (set, get) => ({
       .filter((line) => line.trim() !== '')
 
     try {
-      const routeDecision = state.providerMode === 'smart'
-        ? await routerService.classify(routingText, history, state.manualProvider)
-        : routerService.manual(state.manualProvider)
+      const offlineProvider = state.manualProvider === 'cloud' ? 'gemma-local' : state.manualProvider
+      const routeDecision = state.networkStatus === 'offline'
+        ? routerService.localOnly('offline', state.providerMode === 'manual' ? offlineProvider : 'gemma-local')
+        : state.providerMode === 'smart'
+          ? await routerService.classify(routingText, history, state.manualProvider, abortController.signal)
+          : routerService.manual(state.manualProvider)
 
       if (abortController.signal.aborted) {
-        get()._setGenerationStatus('idle')
+        if (get().abortController === abortController) {
+          get()._setGenerationStatus('idle')
+        }
         return
       }
 
@@ -126,6 +119,8 @@ export const createChatSlice: Slice<ChatSlice> = (set, get) => ({
         signal: abortController.signal,
       })
     } catch (error) {
+      if (get().abortController !== abortController) return
+
       if (abortController.signal.aborted) {
         get()._setGenerationStatus('idle')
         return
@@ -133,7 +128,9 @@ export const createChatSlice: Slice<ChatSlice> = (set, get) => ({
       get()._setGenerationStatus('error')
       throw error
     } finally {
-      get()._setAbortController(null)
+      if (get().abortController === abortController) {
+        get()._setAbortController(null)
+      }
     }
   },
 

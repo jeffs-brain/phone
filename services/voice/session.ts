@@ -121,6 +121,12 @@ export const voiceSession = {
       return
     }
 
+    if (storeApi.get().networkStatus === 'offline') {
+      storeApi.get().setVoiceStatus('error')
+      storeApi.get().setVoiceError('Voice needs a network connection. Local text chat still works offline.')
+      return
+    }
+
     if (GRADIUM_API_KEY === undefined || GRADIUM_API_KEY.trim() === '') {
       storeApi.get().setVoiceStatus('error')
       storeApi.get().setVoiceError('Gradium API key is missing.')

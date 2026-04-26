@@ -1,36 +1,44 @@
-import { Pressable, Text, View } from 'react-native'
+import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 
+import { isModelActivityStatus } from '../../lib/chat/status-helpers'
+import { colors } from '../../lib/theme'
+import type { ModelStatus } from '../../store/slices/inference'
 import { styles } from './styles'
 
 export type ChatHeaderProps = {
-  readonly generationActive: boolean
+  readonly modelStatus: ModelStatus
   readonly onNewThread: () => void
   readonly onOpenMemories: () => void
   readonly onOpenSettings: () => void
+  readonly statusDotColour: string
+  readonly statusPillLabel: string
 }
 
 export function ChatHeader({
-  generationActive,
+  modelStatus,
   onNewThread,
   onOpenMemories,
   onOpenSettings,
+  statusDotColour,
+  statusPillLabel,
 }: ChatHeaderProps) {
   return (
     <View style={styles.header}>
-      <View style={styles.titleGroup}>
-        <Text style={styles.eyebrow}>Private phone brain</Text>
-        <Text style={styles.title}>Jeff</Text>
-      </View>
       <View style={styles.headerActions}>
+        <View style={styles.statusPill}>
+          <View style={[styles.statusDot, { backgroundColor: statusDotColour }]} />
+          <Text style={styles.statusPillLabel} numberOfLines={1}>{statusPillLabel}</Text>
+          {isModelActivityStatus(modelStatus) ? (
+            <ActivityIndicator color={colors.accent.teal} size="small" />
+          ) : null}
+        </View>
         <Pressable
           accessibilityLabel="New chat"
           accessibilityRole="button"
-          accessibilityState={{ disabled: generationActive }}
-          disabled={generationActive}
           onPress={onNewThread}
           style={({ pressed }) => [
             styles.headerIconButton,
-            generationActive ? styles.disabledHeaderButton : null,
+            { marginLeft: 'auto' },
             pressed ? styles.pressed : null,
           ]}
         >

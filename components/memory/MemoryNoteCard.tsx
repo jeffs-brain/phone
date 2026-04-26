@@ -4,6 +4,7 @@ import {
   cleanMemoryText,
   formatMemoryDate,
   formatRelativeDate,
+  memoryTypeLabel,
 } from '../../lib/memory-display'
 import { colors, radius, shadows } from '../../lib/theme'
 import type { MemoryNoteSummary } from '../../store/slices/memory'
@@ -35,7 +36,7 @@ export function MemoryNoteCard({
           <View style={styles.memoryNameRow}>
             <Text style={styles.memoryName} numberOfLines={2}>{note.name}</Text>
             <View style={styles.typePill}>
-              <Text style={styles.typePillText}>{note.type}</Text>
+              <Text style={styles.typePillText}>{memoryTypeLabel(note.type)}</Text>
             </View>
           </View>
           <Text style={styles.memoryMeta}>

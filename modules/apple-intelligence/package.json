@@ -1,0 +1,9 @@
+{
+  "name": "jeff-apple-intelligence",
+  "version": "0.0.1",
+  "description": "Local Expo module for Apple Foundation Models, Vision, and PDF text extraction.",
+  "license": "UNLICENSED",
+  "author": "Jeff Phone",
+  "private": true,
+  "main": "index.ts"
+}

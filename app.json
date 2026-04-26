@@ -40,6 +40,24 @@
         }
       ],
       [
+        "@livekit/react-native-expo-plugin",
+        {
+          "android": {
+            "audioType": "communication"
+          },
+          "ios": {
+            "enableMultitaskingCameraAccess": false
+          }
+        }
+      ],
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "microphonePermission": "Jeff uses the microphone for voice chat.",
+          "cameraPermission": "Jeff does not use the camera for voice chat."
+        }
+      ],
+      [
         "@siteed/audio-studio",
         {
           "enablePhoneStateHandling": false,

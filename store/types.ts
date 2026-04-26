@@ -3,6 +3,7 @@ import type { StateCreator } from 'zustand'
 import type { ChatSlice } from './slices/chat'
 import type { InferenceSlice } from './slices/inference'
 import type { MemorySlice } from './slices/memory'
+import type { NetworkSlice } from './slices/network'
 import type { RoutingSlice } from './slices/routing'
 import type { SettingsSlice } from './slices/settings'
 import type { VoiceSlice } from './slices/voice'
@@ -17,6 +18,7 @@ export type RootState = InferenceSlice
   & ChatSlice
   & VoiceSlice
   & MemorySlice
+  & NetworkSlice
   & RoutingSlice
   & SettingsSlice
 

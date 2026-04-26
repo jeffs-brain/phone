@@ -1,6 +1,7 @@
 import { Pressable, Text, TextInput, View } from 'react-native'
 
 import { colors } from '../../lib/theme'
+import type { VoiceTransport } from '../../store/slices/settings'
 import type { VoiceStatus } from '../../store/slices/voice'
 import type { ContentPart } from '../../store/types'
 import { GlassSurface } from './glass-surface'
@@ -28,6 +29,7 @@ export type ChatComposerProps = {
   readonly voiceCanPress: boolean
   readonly voiceError: string | null
   readonly voiceStatus: VoiceStatus
+  readonly voiceTransport: VoiceTransport
   readonly voiceTranscript: string
 }
 
@@ -64,6 +66,7 @@ export function ChatComposer({
   voiceCanPress,
   voiceError,
   voiceStatus,
+  voiceTransport,
   voiceTranscript,
 }: ChatComposerProps) {
   return (
@@ -73,6 +76,7 @@ export function ChatComposer({
         <VoiceTray
           voiceError={voiceError}
           voiceStatus={voiceStatus}
+          voiceTransport={voiceTransport}
           voiceTranscript={voiceTranscript}
         />
       ) : null}
