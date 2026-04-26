@@ -1,0 +1,16 @@
+You are working in /Users/alexjay/code/jeffs-brain/phone. The user explicitly requested subagents and robust implementation. You are not alone in the codebase: do not revert edits made by others, and adjust to existing changes. Ownership: services/memory.ts only. Task: implement the memory-service side of automatic post-chat extraction over the existing @jeffs-brain/memory-react-native SDK, but do not touch inference.ts or UI files.
+
+Context:
+- Current memory.ts already creates a singleton MemoryClient over Expo file storage + op-sqlite, defines MEMORY_TOOL_DEFINITIONS and memoryService.runTool/recallPreContext/rememberExplicitInstruction.
+- SDK createMemoryClient can accept a Provider with structured() used by client.extract(). Existing client currently has no provider, so automatic extraction is missing.
+- We need a bridge that lets inference.ts register a local structured-completion handler later, without memory.ts importing inference.ts.
+
+Implement in services/memory.ts:
+1) Import the provider/request/response types needed from @jeffs-brain/memory-react-native.
+2) Add a mutable structured handler type, e.g. takes StructuredRequest + optional AbortSignal and returns Promise<string>.
+3) Add a local Provider object for extraction. Its structured() calls the mutable handler or throws a clear error. complete() can be minimal but type-correct; if feasible delegate to structured, otherwise throw a clear unsupported error.
+4) Pass this provider into createMemoryClient().
+5) Add memoryService.setStructuredProvider(handler) and memoryService.extractTurn({ sessionId, userText, assistantText, signal? }). extractTurn should call client.extract() with a deterministic per-turn sessionId, DEFAULT_SCOPE, MEMORY_ACTOR_ID, and only visible user/assistant text. It should update memory slice extraction status/summary similarly to existing explicit remember/recall paths.
+6) Keep TypeScript strict, no any, British English. Use types over interfaces. Keep changes focused.
+
+Return a concise summary and list changed files. Do not run long native builds; typecheck is okay if quick.
