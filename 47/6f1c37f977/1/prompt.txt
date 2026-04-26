@@ -1,0 +1,34 @@
+/Users/alexjay/Downloads/IMG_0052.PNG /Users/alexjay/Downloads/IMG_0051.PNG /Users/alexjay/Downloads/IMG_0054.PNG /Users/alexjay/Downloads/IMG_0053.PNG so the thinking is still show inside the final response for gemma4 :/ also memory recall is working, but it doesnt seem to have the content of the actual memory???
+
+---
+
+keep getting "I did not get a final answer from the model. try again" as a response when asking wha twe bought in ikea recently, it returns the memories, but then shits the bed, are passing too much context? what is going on?
+
+---
+
+[Image #1]
+
+---
+
+we need to support markdown as the model is outputting that
+[Image #1]
+
+---
+
+continue
+
+---
+
+it keeps crashing when doing memory recall, what is going on?
+
+---
+
+i am getting livekit token endpoint missing when using ai-coustics stuff
+
+---
+
+ok nice nice, lets now get this booted on the simulator, i have done a good ipad video. ive selected the target in xcode
+
+---
+
+iphone 17 pro max
