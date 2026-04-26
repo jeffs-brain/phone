@@ -24,9 +24,6 @@ export function ChatHeader({
 }: ChatHeaderProps) {
   return (
     <View style={styles.header}>
-      <View style={styles.titleGroup}>
-        <Text style={styles.title}>Jeff Phone</Text>
-      </View>
       <View style={styles.headerActions}>
         <View style={styles.statusPill}>
           <View style={[styles.statusDot, { backgroundColor: statusDotColour }]} />
@@ -41,6 +38,7 @@ export function ChatHeader({
           onPress={onNewThread}
           style={({ pressed }) => [
             styles.headerIconButton,
+            { marginLeft: 'auto' },
             pressed ? styles.pressed : null,
           ]}
         >

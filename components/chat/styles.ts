@@ -14,16 +14,9 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 14,
   },
-  titleGroup: {
-    flex: 1,
-    paddingRight: 12,
-  },
-  title: {
-    ...typography.display,
-    color: colors.text.primary,
-  },
   headerActions: {
     alignItems: 'center',
+    flex: 1,
     flexDirection: 'row',
     gap: 8,
   },
