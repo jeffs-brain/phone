@@ -205,16 +205,23 @@ const buildCompletionParams = (
   includeMedia: boolean,
   messages = buildMessages(messageId, includeMedia),
   enableTools = !includeMedia,
+  allowThinking = true,
+  maxTokens?: number,
 ): CompletionParams => {
-  const enableThinking = !includeMedia && storeApi.get().thinkingEnabled
+  const enableThinking = allowThinking && !includeMedia && storeApi.get().thinkingEnabled
   return {
     messages,
     n_threads: INFERENCE_CONFIG.N_THREADS,
-    n_predict: INFERENCE_CONFIG.N_PREDICT_MAX,
+    n_predict: maxTokens ?? (
+      enableThinking ? INFERENCE_CONFIG.CHAT_THINKING_MAX_TOKENS : INFERENCE_CONFIG.CHAT_MAX_TOKENS
+    ),
     stop: [...GEMMA_STOPS],
     jinja: true,
     enable_thinking: enableThinking,
     reasoning_format: enableThinking ? 'auto' : 'none',
+    temperature: INFERENCE_CONFIG.TEMPERATURE,
+    top_p: INFERENCE_CONFIG.TOP_P,
+    top_k: INFERENCE_CONFIG.TOP_K,
     ...(enableThinking
       ? {
           thinking_budget_tokens: INFERENCE_CONFIG.THINKING_BUDGET_TOKENS,
@@ -241,10 +248,13 @@ const buildMediaCompletionParams = (): CompletionParams => {
     prompt: mediaPrompt.prompt,
     media_paths: [...mediaPrompt.mediaPaths],
     n_threads: INFERENCE_CONFIG.N_THREADS,
-    n_predict: INFERENCE_CONFIG.N_PREDICT_MAX,
+    n_predict: INFERENCE_CONFIG.VISION_MAX_TOKENS,
     stop: [...GEMMA_STOPS],
     enable_thinking: false,
     reasoning_format: 'none',
+    temperature: INFERENCE_CONFIG.TEMPERATURE,
+    top_p: INFERENCE_CONFIG.TOP_P,
+    top_k: INFERENCE_CONFIG.TOP_K,
     parallel_tool_calls: DISABLE_PARALLEL_TOOL_CALLS,
   }
 }
@@ -339,7 +349,7 @@ const structuredMemoryCompletion = async (
     {
       messages,
       n_threads: INFERENCE_CONFIG.N_THREADS,
-      n_predict: request.maxTokens ?? 512,
+      n_predict: request.maxTokens ?? INFERENCE_CONFIG.MEMORY_MAX_TOKENS,
       stop: [...GEMMA_STOPS],
       jinja: true,
       enable_thinking: false,
@@ -368,7 +378,7 @@ const memoryCompletion = async (
     {
       messages,
       n_threads: INFERENCE_CONFIG.N_THREADS,
-      n_predict: request.maxTokens ?? 512,
+      n_predict: request.maxTokens ?? INFERENCE_CONFIG.MEMORY_MAX_TOKENS,
       stop: [...GEMMA_STOPS],
       jinja: true,
       enable_thinking: false,
@@ -489,14 +499,36 @@ const prepareToolCall = (call: LlamaToolCall): PreparedToolCall => {
 const normaliseCompletionContent = (content: unknown, thinking: unknown = ''): string =>
   sanitiseModelResponse(content, thinking).content
 
+const completionLimitReason = (result: NativeCompletionResult): string | null => {
+  const record: Record<string, unknown> = isRecord(result) ? result : {}
+  if (record.context_full === true) return 'context'
+  if (record.truncated === true) return 'prompt'
+
+  const stoppedLimit = record.stopped_limit
+  if (typeof stoppedLimit === 'number' && stoppedLimit > 0) return 'output'
+
+  return null
+}
+
+const completionLimitMessage = (reason: string): string => {
+  if (reason === 'context') return 'The local context filled before the model could finish. Try a shorter prompt or start a fresh chat.'
+  if (reason === 'prompt') return 'The prompt was truncated before generation. Try a shorter prompt or fewer attachments.'
+  return 'Stopped at the local token limit.'
+}
+
 const normaliseCompletionResult = (result: NativeCompletionResult): {
   readonly content: string
   readonly thinking: string
 } => {
   const sanitised = sanitiseModelResponse(result.content, result.reasoning_content)
+  const limitReason = completionLimitReason(result)
   const content = sanitised.content.trim() === ''
-    ? 'I did not get a final answer from the model. Try again.'
-    : sanitised.content
+    ? limitReason === null
+      ? 'I did not get a final answer from the model. Try again.'
+      : completionLimitMessage(limitReason)
+    : limitReason === null
+      ? sanitised.content
+      : `${sanitised.content}\n\n${completionLimitMessage(limitReason)}`
   return {
     content,
     thinking: storeApi.get().thinkingEnabled ? sanitised.thinking : '',
@@ -811,7 +843,14 @@ const generateWithMemoryTools = async (
   let usedMemoryTools = false
   let result = await completeWithLoadedContext(
     signal,
-    buildCompletionParams(messageId, false, messages, true),
+    buildCompletionParams(
+      messageId,
+      false,
+      messages,
+      true,
+      false,
+      INFERENCE_CONFIG.TOOL_CHOICE_MAX_TOKENS,
+    ),
   )
 
   for (let round = 0; round < TOOL_LIMITS.MAX_ROUNDS; round += 1) {
@@ -838,7 +877,14 @@ const generateWithMemoryTools = async (
 
     result = await completeWithLoadedContext(
       signal,
-      buildCompletionParams(messageId, false, messages, true),
+      buildCompletionParams(
+        messageId,
+        false,
+        messages,
+        true,
+        false,
+        INFERENCE_CONFIG.TOOL_CHOICE_MAX_TOKENS,
+      ),
     )
   }
 
@@ -852,6 +898,17 @@ const generateWithMemoryTools = async (
 
 const cloudCompletionResult = (content: string): NativeCompletionResult =>
   ({ content, reasoning_content: '' }) as NativeCompletionResult
+
+const completionReasoningContent = (response: SdkCompletionResponse): string => {
+  const record = response as SdkCompletionResponse & { readonly reasoning_content?: unknown }
+  return typeof record.reasoning_content === 'string' ? record.reasoning_content : ''
+}
+
+const cloudCompletionWithThinking = (
+  content: string,
+  thinking: string,
+): NativeCompletionResult =>
+  ({ content, reasoning_content: thinking }) as NativeCompletionResult
 
 const latestUserImage = (): Extract<ContentPart, { type: 'image' }> | null => {
   const messages = storeApi.get().messages
@@ -903,7 +960,7 @@ const generateWithAppleVisionTextFallback = async (
 ): Promise<GenerationOutcome> => {
   throwIfAborted(signal)
   const image = latestUserImage()
-  if (image === null) throw new Error('Image attachment did not reach the local vision fallback.')
+  if (image === null) throw new Error('Image attachment did not reach the local vision route.')
 
   storeApi.get()._setGenerationStatus('preparing-vision')
   const analysis = await withAbortableTimeout(
@@ -968,7 +1025,7 @@ const generateWithAppleFoundation = async (
         'If Apple Vision supplied OCR or labels, answer only from those image signals and say when they are insufficient.',
       ].join('\n'),
       messages: finalMessages,
-      maxTokens: INFERENCE_CONFIG.N_PREDICT_MAX,
+      maxTokens: INFERENCE_CONFIG.CHAT_MAX_TOKENS,
     }),
     signal,
     APPLE_PROVIDER.TEXT_GENERATION_TIMEOUT_MS,
@@ -992,11 +1049,12 @@ const generateWithCloud = async (
     CLOUD_SYSTEM_PROMPT,
     signal,
   )
-  const content = response.content.trim() || 'Cloud provider returned an empty response.'
+  const result = cloudCompletionWithThinking(response.content, completionReasoningContent(response))
+  const { content, thinking } = normaliseCompletionResult(result)
   storeApi.get()._setGenerationStatus('streaming')
   appendBuffered(messageId, content)
   return {
-    result: cloudCompletionResult(content),
+    result: cloudCompletionWithThinking(content, thinking),
     memoryToolExecutions: [],
   }
 }
@@ -1012,7 +1070,7 @@ const markProviderFallback = (
     ...current,
     provider: 'gemma-local',
     tier: 'medium',
-    label: `fallback:${requestedProvider}-${reason}`,
+    label: `local-route:${requestedProvider}-${reason}`,
     confidence: 0,
     routed: false,
   } as const

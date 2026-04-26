@@ -20,12 +20,12 @@ export const MODEL_OPTIONS = [
 export const PROVIDER_OPTIONS = [
   { value: 'gemma-local', label: 'Local Gemma', detail: 'Default private path' },
   { value: 'apple-fm', label: 'Apple FM', detail: 'On-device Apple Foundation Models when available' },
-  { value: 'cloud', label: 'Cloud', detail: 'Gemini large-tier fallback when configured' },
+  { value: 'cloud', label: 'Cloud', detail: 'Gemini large-tier route when configured' },
 ] as const satisfies readonly SettingsOption<ProviderId>[]
 
 export const VOICE_TRANSPORT_OPTIONS = [
-  { value: 'gradium-direct', label: 'Gradium Direct', detail: 'Fast STT with manual message playback' },
-  { value: 'livekit-ai-coustics', label: 'LiveKit ai-coustics', detail: 'Enhanced mic route through the voice agent' },
+  { value: 'gradium-direct', label: 'Gradium Direct', detail: 'Raw app mic frames to Gradium STT with manual playback' },
+  { value: 'livekit-ai-coustics', label: 'LiveKit ai-coustics', detail: 'ai-coustics enhancement before Gradium STT via the agent' },
 ] as const satisfies readonly SettingsOption<VoiceTransport>[]
 
 export const voiceTransportLabel = (transport: VoiceTransport): string =>
@@ -141,7 +141,7 @@ export const friendlyModelError = (error: string): string => {
     return 'There is not enough local storage for this model.'
   }
   if (normalised.includes('simulator projector gpu')) {
-    return 'Simulator projector GPU crashed. CPU vision fallback is enabled for this install.'
+    return 'Simulator projector GPU crashed. CPU vision route is enabled for this install.'
   }
   if (normalised.includes('projector') || normalised.includes('initialise')) {
     return 'Native model initialisation failed. Try Gemma 4 E2B, then reload.'

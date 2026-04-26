@@ -41,6 +41,14 @@ export const memoryStatusCopy = (status: string, count: number): string => {
 
 export const cleanMemoryText = (value: string | undefined): string => value?.trim() ?? ''
 
+export const memoryTypeLabel = (type: string): string => {
+  if (type === 'reference') return 'Reference chunk'
+  if (type === 'feedback') return 'Feedback'
+  if (type === 'project') return 'Project note'
+  if (type === 'reflection') return 'Reflection'
+  return 'Memory note'
+}
+
 const isOpenLogEntry = (entry: ToolLogEntry): boolean =>
   entry.status === 'pending' || entry.status === 'running'
 
@@ -73,9 +81,12 @@ export const filterMemoryNotes = (
   const query = rawQuery.trim().toLowerCase()
   if (query === '') return notes
   return notes.filter((note) =>
+    note.path.toLowerCase().includes(query) ||
     note.name.toLowerCase().includes(query) ||
     note.preview?.toLowerCase().includes(query) ||
     note.description?.toLowerCase().includes(query) ||
+    note.indexEntry?.toLowerCase().includes(query) ||
+    note.content.toLowerCase().includes(query) ||
     note.tags.join(' ').toLowerCase().includes(query),
   )
 }

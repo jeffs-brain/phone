@@ -92,6 +92,7 @@ describe('GeminiProvider', () => {
     )
     expect(response).toEqual({
       content: 'Cloud answer',
+      reasoning_content: '',
       toolCalls: [],
       usage: {
         inputTokens: 12,
@@ -114,6 +115,29 @@ describe('GeminiProvider', () => {
         temperature: 0.2,
       },
     })
+  }))
+
+  it('keeps Gemini thought parts out of visible content', async () => withRestoredFetch(async () => {
+    mockFetch(() => new Response(JSON.stringify({
+      candidates: [{
+        finishReason: 'STOP',
+        content: {
+          parts: [
+            { text: 'Private reasoning summary.', thought: true, thoughtSignature: 'encrypted-signature' },
+            { text: 'Visible answer.' },
+          ],
+        },
+      }],
+    })))
+
+    const provider = new GeminiProvider({ apiKey: 'test-key', model: 'gemini-test' })
+    const response = await provider.complete({
+      messages: [{ role: 'user', content: 'Hello' }],
+    })
+
+    expect(response.content).toEqual('Visible answer.')
+    expect((response as typeof response & { readonly reasoning_content?: string }).reasoning_content)
+      .toEqual('Private reasoning summary.')
   }))
 
   it('keeps consecutive same-role turns valid for Gemini', async () => withRestoredFetch(async () => {

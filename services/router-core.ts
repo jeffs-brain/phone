@@ -28,7 +28,7 @@ export const fallbackDecision = (
 ): RouteDecision => ({
   tier: provider === 'cloud' ? 'large' : 'medium',
   provider,
-  label: `fallback:${reason}`,
+  label: `manual-route:${reason}`,
   confidence: 0,
   latencyMs: performance.now() - start,
   routed: false,

@@ -16,19 +16,19 @@ type GeminiProviderConfig = {
   readonly requestTimeoutMs?: number
 }
 
-type GeminiPart = {
+type GeminiRequestPart = {
   readonly text: string
 }
 
 type GeminiContent = {
   readonly role: 'user' | 'model'
-  readonly parts: readonly GeminiPart[]
+  readonly parts: readonly GeminiRequestPart[]
 }
 
 type GeminiRequestBody = {
   readonly contents: readonly GeminiContent[]
   readonly systemInstruction?: {
-    readonly parts: readonly GeminiPart[]
+    readonly parts: readonly GeminiRequestPart[]
   }
   readonly generationConfig?: {
     readonly maxOutputTokens?: number
@@ -39,6 +39,13 @@ type GeminiRequestBody = {
 }
 
 type JsonRecord = Record<string, unknown>
+type GeminiCompletionResponse = CompletionResponse & {
+  readonly reasoning_content: string
+}
+type GeminiParsedText = {
+  readonly content: string
+  readonly thinking: string
+}
 
 const DEFAULT_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta'
 const DEFAULT_MAX_TOKENS = 2048
@@ -56,6 +63,9 @@ const numberField = (record: JsonRecord, key: string): number | undefined => {
   const value = record[key]
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
+
+const booleanField = (record: JsonRecord, key: string): boolean =>
+  record[key] === true
 
 const textFromMessage = (message: SdkMessage): string => {
   if (typeof message.content === 'string') return message.content
@@ -196,15 +206,27 @@ const requestSignal = (
 const recordArray = (value: unknown): JsonRecord[] =>
   Array.isArray(value) ? value.filter(isRecord) : []
 
-const responseText = (data: JsonRecord): string => {
+const responseText = (data: JsonRecord): GeminiParsedText => {
   const candidate = recordArray(data.candidates)[0]
   const content = isRecord(candidate?.content) ? candidate.content : null
   const parts = recordArray(content?.parts)
-  return parts
-    .map((part) => stringField(part, 'text') ?? '')
-    .filter((part) => part.trim() !== '')
-    .join('')
-    .trim()
+  const visible: string[] = []
+  const thinking: string[] = []
+
+  for (const part of parts) {
+    const text = stringField(part, 'text')
+    if (text === null || text.trim() === '') continue
+    if (booleanField(part, 'thought')) {
+      thinking.push(text)
+    } else {
+      visible.push(text)
+    }
+  }
+
+  return {
+    content: visible.join('').trim(),
+    thinking: thinking.join('\n\n').trim(),
+  }
 }
 
 const usageFromResponse = (data: JsonRecord): Usage => {
@@ -231,18 +253,19 @@ const blockedReason = (data: JsonRecord): string | null => {
   return stringField(feedback, 'blockReason')
 }
 
-const parseResponse = (text: string): CompletionResponse => {
+const parseResponse = (text: string): GeminiCompletionResponse => {
   const parsed: unknown = JSON.parse(text)
   if (!isRecord(parsed)) throw new Error('gemini: invalid response shape')
 
-  const content = responseText(parsed)
-  if (content === '') {
+  const parsedText = responseText(parsed)
+  if (parsedText.content === '' && parsedText.thinking === '') {
     const reason = blockedReason(parsed)
     throw new Error(reason === null ? 'gemini: empty response' : `gemini: prompt blocked (${reason})`)
   }
 
   return {
-    content,
+    content: parsedText.content,
+    reasoning_content: parsedText.thinking,
     toolCalls: [],
     usage: usageFromResponse(parsed),
     stopReason: stopReasonFromResponse(parsed),

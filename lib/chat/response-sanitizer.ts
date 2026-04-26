@@ -10,7 +10,8 @@ type ChannelSegment = {
   readonly text: string
 }
 
-const CHANNEL_MARKER = /<\|channel\|>\s*(analysis|thought|thinking|final)\s*/gi
+const CHANNEL_CONTROL_MARKER =
+  /<\|channel\|?>\s*(analysis|thought|thinking|final|response)\s*|<channel\|>|<\|message\|>|<\|start\|>\s*assistant\s*|<\|end\|>/gi
 const THINK_OPEN = '<think>'
 const THINK_CLOSE = '</think>'
 
@@ -21,7 +22,7 @@ const normaliseWhitespace = (text: string): string =>
     .trim()
 
 const markerChannel = (value: string): ChannelKind =>
-  value.toLowerCase() === 'final' ? 'final' : 'thinking'
+  ['final', 'response'].includes(value.toLowerCase()) ? 'final' : 'thinking'
 
 const splitChannelMarkers = (text: string): readonly ChannelSegment[] => {
   const segments: ChannelSegment[] = []
@@ -29,8 +30,8 @@ const splitChannelMarkers = (text: string): readonly ChannelSegment[] => {
   let currentChannel: ChannelKind = 'final'
   let sawMarker = false
 
-  CHANNEL_MARKER.lastIndex = 0
-  let match = CHANNEL_MARKER.exec(text)
+  CHANNEL_CONTROL_MARKER.lastIndex = 0
+  let match = CHANNEL_CONTROL_MARKER.exec(text)
   while (match !== null) {
     if (match.index > cursor) {
       segments.push({
@@ -39,9 +40,14 @@ const splitChannelMarkers = (text: string): readonly ChannelSegment[] => {
       })
     }
     sawMarker = true
-    currentChannel = markerChannel(match[1] ?? 'final')
+    const nextChannel = match[1]
+    if (nextChannel !== undefined) {
+      currentChannel = markerChannel(nextChannel)
+    } else if (match[0].toLowerCase() === '<channel|>') {
+      currentChannel = 'final'
+    }
     cursor = match.index + match[0].length
-    match = CHANNEL_MARKER.exec(text)
+    match = CHANNEL_CONTROL_MARKER.exec(text)
   }
 
   if (!sawMarker) return [{ channel: 'final', text }]
