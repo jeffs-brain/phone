@@ -1,0 +1,13 @@
+we seem to be getting the thinking and channel response stuff from the gemini cloud model in the same response. we also need to figure out using web search what the optimal thinking config is for gemma4 e2b and e4b because we seem to be chopping off before the model has a final answer to respond with.
+
+Do we need to detect the noise level for auto activating ai acoustics? Are we then using that better audio to send through to the gradi speech to text model
+
+The ingestion is it turning them into wiki styled articles like the actual memory package offers. If it is then maybe we need to represent that better in the memories view
+
+Is the readme clear as to the flow
+
+The thinking steps from the cloud provider are being shown in the same message as the response. 
+
+We shouldn’t be showing Apple models or cloud or anything as fall backs. They are features
+
+i want you to use multiple subagents to work through these things in parallel. be clean, thorough and precise
