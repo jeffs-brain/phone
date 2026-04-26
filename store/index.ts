@@ -5,6 +5,7 @@ import { createJSONStorage, devtools, persist, subscribeWithSelector } from 'zus
 import { createChatSlice } from './slices/chat'
 import { createInferenceSlice } from './slices/inference'
 import { createMemorySlice } from './slices/memory'
+import { createNetworkSlice } from './slices/network'
 import { createRoutingSlice } from './slices/routing'
 import { createSettingsSlice } from './slices/settings'
 import { createVoiceSlice } from './slices/voice'
@@ -19,6 +20,7 @@ export const useStore = create<RootState>()(
           ...createChatSlice(...a),
           ...createVoiceSlice(...a),
           ...createMemorySlice(...a),
+          ...createNetworkSlice(...a),
           ...createRoutingSlice(...a),
           ...createSettingsSlice(...a),
         }),

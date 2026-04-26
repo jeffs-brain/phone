@@ -19,11 +19,14 @@ import {
   type StoredMemoryNote,
   type StructuredRequest as SdkStructuredRequest,
 } from '@jeffs-brain/memory-react-native'
+import { chunkAuto } from '@jeffs-brain/memory-react-native/ingest'
+import * as FileSystem from 'expo-file-system/legacy'
 
 import { BRAIN_ID, MEMORY_RECALL } from '../lib/constants'
 import { createId } from '../lib/id'
 import { storeApi } from '../store'
 import type { MemoryNoteSummary, RecallHit } from '../store/slices/memory'
+import { appleIntelligenceService } from './apple-intelligence'
 
 const MEMORY_ACTOR_ID = process.env.EXPO_PUBLIC_MEMORY_ACTOR_ID?.trim() || 'local-user'
 const DEFAULT_SCOPE: Scope = 'global'
@@ -32,6 +35,10 @@ const MAX_TOOL_RECALL_HITS = 5
 const MAX_LIST_NOTES = 12
 const MEMORY_NOTE_PREVIEW_LENGTH = 180
 const MAX_EXTRACTED_MEMORIES_PER_TURN = 3
+const MAX_IMPORT_FILE_BYTES = 64 * 1024 * 1024
+const IMPORT_CHUNK_MAX_TOKENS = 900
+const IMPORT_CHUNK_OVERLAP_TOKENS = 90
+const IMPORT_INDEX_PREVIEW_CHARS = 2_400
 const MANAGED_MEMORY_PATH_PREFIX = 'memory/global/'
 const GENERATED_MEMORY_INDEX_PATH = `${MANAGED_MEMORY_PATH_PREFIX}MEMORY.md`
 
@@ -52,6 +59,19 @@ type ExtractTurnOptions = {
   readonly userText: string
   readonly assistantText: string
   readonly signal?: AbortSignal
+}
+
+export type ImportDocumentInput = {
+  readonly uri: string
+  readonly name: string
+  readonly mimeType?: string
+  readonly size?: number
+}
+
+export type ImportDocumentResult = {
+  readonly title: string
+  readonly noteCount: number
+  readonly sourceKind: 'pdf' | 'text'
 }
 
 type JsonRecord = Record<string, unknown>
@@ -103,6 +123,87 @@ const noteTitle = (text: string): string => {
   const firstSentence = text.split(/[.!?\n]/)[0]?.trim() ?? ''
   if (firstSentence === '') return 'Remembered note'
   return firstSentence.length <= 72 ? firstSentence : `${firstSentence.slice(0, 69)}...`
+}
+
+const fileExtension = (name: string): string | null => {
+  const index = name.lastIndexOf('.')
+  if (index === -1 || index === name.length - 1) return null
+  return name.slice(index + 1).toLowerCase()
+}
+
+const documentTitle = (name: string): string => {
+  const withoutExtension = name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim()
+  return withoutExtension === '' ? 'Imported document' : withoutExtension
+}
+
+const isPdfDocument = (input: ImportDocumentInput): boolean => {
+  const mimeType = input.mimeType?.toLowerCase()
+  return mimeType?.includes('pdf') === true || input.name.toLowerCase().endsWith('.pdf')
+}
+
+const assertImportSize = async (input: ImportDocumentInput): Promise<void> => {
+  if (input.size !== undefined && input.size > MAX_IMPORT_FILE_BYTES) {
+    throw new Error(`${input.name} is larger than ${Math.round(MAX_IMPORT_FILE_BYTES / 1024 / 1024)} MB.`)
+  }
+
+  const info = await FileSystem.getInfoAsync(input.uri)
+  if (!info.exists || info.isDirectory) throw new Error(`${input.name} could not be read.`)
+  if ('size' in info && typeof info.size === 'number' && info.size > MAX_IMPORT_FILE_BYTES) {
+    throw new Error(`${input.name} is larger than ${Math.round(MAX_IMPORT_FILE_BYTES / 1024 / 1024)} MB.`)
+  }
+}
+
+const loadImportText = async (input: ImportDocumentInput): Promise<{
+  readonly text: string
+  readonly sourceKind: 'pdf' | 'text'
+  readonly pageCount?: number
+}> => {
+  await assertImportSize(input)
+
+  if (isPdfDocument(input)) {
+    const pdf = await appleIntelligenceService.extractPdfText(input.uri)
+    return {
+      text: pdf.text,
+      sourceKind: 'pdf',
+      pageCount: pdf.pageCount,
+    }
+  }
+
+  const text = await FileSystem.readAsStringAsync(input.uri, {
+    encoding: FileSystem.EncodingType.UTF8,
+  })
+  return {
+    text,
+    sourceKind: 'text',
+  }
+}
+
+const normaliseImportedText = (text: string): string =>
+  text
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim()
+
+const importTags = (input: ImportDocumentInput, sourceKind: 'pdf' | 'text'): readonly string[] => {
+  const ext = fileExtension(input.name)
+  return [
+    'document',
+    'brain_upload',
+    sourceKind,
+    ...(ext === null ? [] : [`file_${ext}`]),
+  ]
+}
+
+const chunkImportedText = (text: string): readonly string[] => {
+  const chunks = chunkAuto(text, {
+    maxTokens: IMPORT_CHUNK_MAX_TOKENS,
+    overlapTokens: IMPORT_CHUNK_OVERLAP_TOKENS,
+  })
+    .map((chunk) => chunk.content.trim())
+    .filter((chunk) => chunk !== '')
+
+  return chunks.length === 0 ? [text] : chunks
 }
 
 const isRecord = (value: unknown): value is JsonRecord =>
@@ -537,6 +638,73 @@ const rememberMemory = async (
   return note.name
 }
 
+const importedDocumentFilename = (
+  title: string,
+  chunkIndex: number,
+  chunkCount: number,
+): string => {
+  const suffix = chunkCount <= 1 ? 'document' : `part-${chunkIndex + 1}`
+  return `${new Date().toISOString().slice(0, 10)}-${cleanFilenamePart(`${title}-${suffix}`)}-${createId('doc').slice(-8)}.md`
+}
+
+const importDocumentToMemory = async (
+  client: MemoryClient,
+  input: ImportDocumentInput,
+): Promise<ImportDocumentResult> => {
+  const loaded = await loadImportText(input)
+  const text = normaliseImportedText(loaded.text)
+  if (text === '') throw new Error(`${input.name} did not contain any extractable text.`)
+
+  const title = documentTitle(input.name)
+  const chunks = chunkImportedText(text)
+  const tags = importTags(input, loaded.sourceKind)
+  const metadata = [
+    `Source file: ${input.name}`,
+    `Source type: ${loaded.sourceKind.toUpperCase()}`,
+    input.mimeType === undefined ? null : `MIME type: ${input.mimeType}`,
+    input.size === undefined ? null : `Original size: ${input.size} bytes`,
+    loaded.pageCount === undefined ? null : `Pages: ${loaded.pageCount}`,
+  ].filter((line): line is string => line !== null)
+
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index] ?? ''
+    const chunkLabel = chunks.length <= 1 ? title : `${title} (${index + 1}/${chunks.length})`
+    const description = [
+      `Imported document: ${title}`,
+      chunks.length <= 1 ? null : `Chunk ${index + 1} of ${chunks.length}`,
+      ...metadata,
+    ].filter((line): line is string => line !== null).join('\n')
+    const content = [
+      `# ${chunkLabel}`,
+      '',
+      ...metadata,
+      '',
+      chunk,
+    ].join('\n')
+
+    await client.remember({
+      filename: importedDocumentFilename(title, index, chunks.length),
+      name: chunkLabel,
+      description,
+      content,
+      type: 'reference',
+      scope: DEFAULT_SCOPE,
+      actorId: MEMORY_ACTOR_ID,
+      tags,
+      indexEntry: [
+        description,
+        chunk.slice(0, IMPORT_INDEX_PREVIEW_CHARS),
+      ].join('\n\n'),
+    })
+  }
+
+  return {
+    title,
+    noteCount: chunks.length,
+    sourceKind: loaded.sourceKind,
+  }
+}
+
 const extractionSummary = (result: ExtractResult): string => {
   if (result.skipped) return `Memory extraction skipped: ${result.reason ?? 'no durable memories found'}`
   if (result.created.length === 0) return 'No new durable memories found'
@@ -776,6 +944,29 @@ export const memoryService = {
       updateMemoryNotesError(detail)
       storeApi.get().setLastExtraction(`Memory tidy failed: ${detail}`)
       appendMemoryLog('memory_consolidate', 'error', detail)
+    }
+  },
+
+  async importDocument(input: ImportDocumentInput): Promise<ImportDocumentResult | null> {
+    const store = storeApi.get()
+    store.setMemoryNotesStatus('loading')
+    store.setMemoryNotesError(null)
+    appendMemoryLog('memory_import', 'running', input.name)
+
+    try {
+      const client = await getMemoryClient()
+      const result = await importDocumentToMemory(client, input)
+      const summary = `Imported ${result.title}: ${result.noteCount} searchable chunk${result.noteCount === 1 ? '' : 's'}`
+      storeApi.get().setLastExtraction(summary)
+      await refreshMemoryNotesAfterWrite(client)
+      appendMemoryLog('memory_import', 'done', summary)
+      return result
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      updateMemoryNotesError(detail)
+      storeApi.get().setLastExtraction(`Document import failed: ${detail}`)
+      appendMemoryLog('memory_import', 'error', detail)
+      return null
     }
   },
 

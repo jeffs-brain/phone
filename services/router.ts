@@ -164,13 +164,35 @@ const parseFastinoClassification = (data: unknown): ParsedClassification | null 
     ?? parseLegacyClassification(records)
 }
 
-const fetchWithTimeout = (url: string, init: RequestInit, timeoutMs: number): Promise<Response> => {
+const fetchWithTimeout = (
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<Response> => {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
-  return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer))
+  const abort = (): void => controller.abort()
+  if (signal?.aborted === true) controller.abort()
+  signal?.addEventListener('abort', abort, { once: true })
+  return fetch(url, { ...init, signal: controller.signal }).finally(() => {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', abort)
+  })
 }
 
 export const routerService = {
+  localOnly(reason: string): RouteDecision {
+    return {
+      tier: 'medium',
+      provider: 'gemma-local',
+      label: `local-only:${reason}`,
+      confidence: 1,
+      latencyMs: 0,
+      routed: false,
+    }
+  },
+
   manual(provider: ProviderId): RouteDecision {
     return {
       tier: provider === 'cloud' ? 'large' : 'medium',
@@ -182,7 +204,12 @@ export const routerService = {
     }
   },
 
-  async classify(message: string, history: string[], fallbackProvider: ProviderId): Promise<RouteDecision> {
+  async classify(
+    message: string,
+    history: string[],
+    fallbackProvider: ProviderId,
+    signal?: AbortSignal,
+  ): Promise<RouteDecision> {
     const start = performance.now()
     if (!FASTINO_API_KEY) {
       return fallback('missing-key', start, fallbackProvider)
@@ -213,7 +240,7 @@ export const routerService = {
           },
           include_confidence: true,
         }),
-      }, ROUTING.FASTINO_TIMEOUT_MS)
+      }, ROUTING.FASTINO_TIMEOUT_MS, signal)
 
       if (!response.ok) return fallback(`http-${response.status}`, start, fallbackProvider)
       const data = await response.json()

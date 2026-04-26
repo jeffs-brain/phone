@@ -2,6 +2,7 @@ import { Text, View } from 'react-native'
 
 import type { RuntimeDiagnostics } from '../../services/inference'
 import type { MemoryNotesStatus } from '../../store/slices/memory'
+import type { NetworkStatus } from '../../store/slices/network'
 import type { ModelId, ModelStatus } from '../../store/slices/inference'
 import type { ProviderMode } from '../../store/slices/settings'
 import type { GenerationStatus, ProviderId } from '../../store/types'
@@ -33,6 +34,12 @@ const PROVIDER_MODE_OPTIONS = [
   { value: 'manual', label: '🔧 Manual' },
   { value: 'smart', label: '🤖 Smart' },
 ] as const satisfies readonly SegmentOption<ProviderMode>[]
+
+const networkStatusLabel = (status: NetworkStatus): string => {
+  if (status === 'online') return 'Online'
+  if (status === 'offline') return 'Offline'
+  return 'Unknown'
+}
 
 export function ModelSettingsSection({
   modelSize,
@@ -176,16 +183,27 @@ export function MemorySettingsSection({
 export function ProviderSettingsSection({
   providerMode,
   manualProvider,
+  networkStatus,
+  networkType,
   onSelectProviderMode,
   onSelectManualProvider,
 }: {
   readonly providerMode: ProviderMode
   readonly manualProvider: ProviderId
+  readonly networkStatus: NetworkStatus
+  readonly networkType: string | null
   readonly onSelectProviderMode: (mode: ProviderMode) => void
   readonly onSelectManualProvider: (provider: ProviderId) => void
 }) {
+  const networkDetail = networkType === null ? undefined : networkType
+  const routeDetail = networkStatus === 'offline'
+    ? 'Offline: Smart and cloud routes stay on-device.'
+    : 'Online: Smart routing can use Fastino and cloud routes when configured.'
+
   return (
     <SettingsSection title="🔀 Provider">
+      <DiagnosticRow label="Network" value={networkStatusLabel(networkStatus)} detail={networkDetail} />
+      <DiagnosticRow label="Routing guard" value={routeDetail} />
       <SegmentedControl
         options={PROVIDER_MODE_OPTIONS}
         selectedValue={providerMode}

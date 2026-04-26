@@ -12,6 +12,7 @@ type DownloadBytes = {
 
 export type ModelStatusBannerProps = {
   readonly downloadBytes: DownloadBytes | null
+  readonly modelError: string | null
   readonly modelStatus: ModelStatus
   readonly onRetryModel: () => void
   readonly onUseSmallerModel: () => void
@@ -21,6 +22,7 @@ export type ModelStatusBannerProps = {
 
 export function ModelStatusBanner({
   downloadBytes,
+  modelError,
   modelStatus,
   onRetryModel,
   onUseSmallerModel,
@@ -43,6 +45,9 @@ export function ModelStatusBanner({
       </View>
       {modelStatus === 'error' ? (
         <View style={styles.statusErrorActions}>
+          {modelError === null ? null : (
+            <Text style={styles.statusErrorText} numberOfLines={2}>{modelError}</Text>
+          )}
           <Pressable
             accessibilityRole="button"
             onPress={onRetryModel}

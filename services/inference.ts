@@ -14,11 +14,13 @@ import type {
   StructuredRequest as SdkStructuredRequest,
 } from '@jeffs-brain/memory-react-native'
 
-import { GEMMA_STOPS, INFERENCE_CONFIG, TOOL_LIMITS } from '../lib/constants'
+import { GEMMA_STOPS, INFERENCE_CONFIG, SYSTEM_PROMPT, TOOL_LIMITS } from '../lib/constants'
+import { sanitiseModelResponse } from '../lib/chat/response-sanitizer'
 import { createId } from '../lib/id'
 import { storeApi } from '../store'
 import type { ModelId } from '../store/slices/inference'
-import type { ProviderId } from '../store/types'
+import type { ContentPart, ProviderId } from '../store/types'
+import { appleIntelligenceService, type AppleImageAnalysis } from './apple-intelligence'
 import { cloudProviderService } from './cloud-provider'
 import {
   buildCloudMessages as buildCloudMessageHistory,
@@ -29,7 +31,7 @@ import {
 } from './inference-messages'
 import { appendBuffered, appendTokenData, finishStream } from './inference-stream'
 import { MEMORY_TOOL_DEFINITIONS, MemoryToolArgumentError, memoryService } from './memory'
-import { ensureModelFile, ensureProjectorFile } from './model-assets'
+import { ensureModelFile, ensureProjectorFile, isModelFileCached, isProjectorFileCached } from './model-assets'
 import { clearRuntimeMarker, isMultimodalGpuAutoDisabled, writeRuntimeMarker } from './runtime-marker'
 
 type LoadedContext = {
@@ -114,6 +116,8 @@ const CLOUD_SYSTEM_PROMPT = [
   'This response is being produced by the selected cloud provider, so do not claim that this specific answer ran on-device.',
   'You do not have direct access to the phone memory tools in this cloud turn unless memory text appears in the prompt.',
 ].join('\n')
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 const setAssetProgress = (stage: 'checking' | 'available' | 'downloading' | 'verifying' | 'downloaded', bytes: {
   readonly received: number
@@ -440,11 +444,22 @@ const prepareToolCall = (call: LlamaToolCall): PreparedToolCall => {
   }
 }
 
-const normaliseCompletionContent = (content: unknown): string =>
-  typeof content === 'string' ? content : ''
+const normaliseCompletionContent = (content: unknown, thinking: unknown = ''): string =>
+  sanitiseModelResponse(content, thinking).content
 
-const normaliseCompletionThinking = (thinking: unknown): string =>
-  typeof thinking === 'string' ? thinking : ''
+const normaliseCompletionResult = (result: NativeCompletionResult): {
+  readonly content: string
+  readonly thinking: string
+} => {
+  const sanitised = sanitiseModelResponse(result.content, result.reasoning_content)
+  const content = sanitised.content.trim() === ''
+    ? 'I did not get a final answer from the model. Try again.'
+    : sanitised.content
+  return {
+    content,
+    thinking: storeApi.get().thinkingEnabled ? sanitised.thinking : '',
+  }
+}
 
 const completionToolCalls = (result: NativeCompletionResult): readonly LlamaToolCall[] => {
   const rawResult: unknown = result
@@ -572,6 +587,10 @@ const ensureMultimodalReady = async (): Promise<void> => {
   if (multimodalInFlight !== null) return multimodalInFlight
 
   const promise = (async () => {
+    if (storeApi.get().networkStatus === 'offline' && !isProjectorFileCached(current.id)) {
+      throw new Error('The vision projector is not cached on this device. Connect once to download it before using image chat offline.')
+    }
+
     const assets = await ensureProjectorFile(current.id, (progress) => {
       setVisionAssetProgress(progress.stage, {
         received: progress.bytesReceived,
@@ -787,6 +806,69 @@ const generateWithMemoryTools = async (
 const cloudCompletionResult = (content: string): NativeCompletionResult =>
   ({ content, reasoning_content: '' }) as NativeCompletionResult
 
+const latestUserImage = (): Extract<ContentPart, { type: 'image' }> | null => {
+  const messages = storeApi.get().messages
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message?.role !== 'user') continue
+    return message.parts.find((part): part is Extract<ContentPart, { type: 'image' }> => part.type === 'image') ?? null
+  }
+  return null
+}
+
+const imageAnalysisText = (analysis: AppleImageAnalysis): string => {
+  const text = analysis.text.length === 0
+    ? 'OCR: no text detected.'
+    : ['OCR:', ...analysis.text.map((line) => `- ${line}`)].join('\n')
+  const labels = analysis.labels.length === 0
+    ? 'Labels: no confident labels detected.'
+    : ['Labels:', ...analysis.labels.map((label) => `- ${label.identifier} (${Math.round(label.confidence * 100)}%)`)].join('\n')
+  return [text, labels].join('\n\n')
+}
+
+const generateWithAppleFoundation = async (
+  messageId: string,
+  signal: AbortSignal,
+): Promise<GenerationOutcome> => {
+  throwIfAborted(signal)
+  const availability = await appleIntelligenceService.foundationAvailability()
+  if (!availability.available) {
+    throw new Error(`Apple Foundation Models unavailable${availability.reason === null ? '' : `: ${availability.reason}`}.`)
+  }
+
+  const messages = storeApi.get().messages.filter((message) => message.id !== messageId)
+  const appleMessages = appleIntelligenceService.buildTextMessages(messages)
+  const image = latestUserImage()
+  const finalMessages = image === null
+    ? appleMessages
+    : [
+        ...appleMessages,
+        {
+          role: 'user' as const,
+          content: [
+            'Use these Apple Vision signals from the attached image to answer the current image question.',
+            imageAnalysisText(await appleIntelligenceService.analyseImage(image.uri)),
+          ].join('\n\n'),
+        },
+      ]
+
+  const content = await appleIntelligenceService.generateText({
+    instructions: [
+      SYSTEM_PROMPT,
+      'This response is being produced by Apple Foundation Models on-device.',
+      'If Apple Vision supplied OCR or labels, answer only from those image signals and say when they are insufficient.',
+    ].join('\n'),
+    messages: finalMessages,
+    maxTokens: INFERENCE_CONFIG.N_PREDICT_MAX,
+  })
+  storeApi.get()._setGenerationStatus('streaming')
+  appendBuffered(messageId, content)
+  return {
+    result: cloudCompletionResult(content),
+    memoryToolExecutions: [],
+  }
+}
+
 const generateWithCloud = async (
   messageId: string,
   signal: AbortSignal,
@@ -813,14 +895,61 @@ const markProviderFallback = (
 ): void => {
   const current = storeApi.get().messages.find((message) => message.id === messageId)?.routeDecision
   if (current === undefined) return
-  storeApi.get().setAssistantRouteDecision(messageId, {
+  const fallbackDecision = {
     ...current,
     provider: 'gemma-local',
     tier: 'medium',
     label: `fallback:${requestedProvider}-${reason}`,
     confidence: 0,
     routed: false,
-  })
+  } as const
+  storeApi.get().setAssistantRouteDecision(messageId, fallbackDecision)
+  storeApi.get().setLastDecision(fallbackDecision)
+}
+
+const initialiseLlamaContext = async (id: ModelId, modelPath: string): Promise<LlamaContext> => {
+  let lastError: unknown = null
+
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    storeApi.get()._setModelStatus('initialised')
+    await writeRuntimeMarker({ modelId: id, stage: 'model-load' })
+    let context: LlamaContext | null = null
+
+    try {
+      context = await initLlama({
+        model: modelPath,
+        n_ctx: INFERENCE_CONFIG.N_CTX,
+        n_batch: INFERENCE_CONFIG.N_BATCH,
+        n_ubatch: INFERENCE_CONFIG.N_UBATCH,
+        n_threads: INFERENCE_CONFIG.N_THREADS,
+        n_gpu_layers: INFERENCE_CONFIG.N_GPU_LAYERS,
+        n_parallel: INFERENCE_CONFIG.N_PARALLEL,
+        ctx_shift: INFERENCE_CONFIG.CTX_SHIFT,
+        flash_attn_type: INFERENCE_CONFIG.FLASH_ATTN_TYPE,
+        use_mlock: false,
+      })
+
+      const parallelReady = await context.parallel.enable({
+        n_parallel: INFERENCE_CONFIG.N_PARALLEL,
+        n_batch: INFERENCE_CONFIG.N_BATCH,
+      })
+      if (!parallelReady) {
+        await context.release()
+        context = null
+        throw new Error('llama.rn parallel queue failed to initialise.')
+      }
+
+      await clearRuntimeMarker()
+      return context
+    } catch (error) {
+      lastError = error
+      await clearRuntimeMarker()
+      await context?.release().catch(() => undefined)
+      if (attempt < 2) await delay(850)
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Local model initialisation failed.')
 }
 
 const loadModelInternal = async (id: ModelId): Promise<void> => {
@@ -833,6 +962,10 @@ const loadModelInternal = async (id: ModelId): Promise<void> => {
   state._setDownloadBytes(null)
 
   try {
+    if (storeApi.get().networkStatus === 'offline' && !isModelFileCached(id)) {
+      throw new Error('The local model is not cached on this device. Connect once to download it before using Jeff offline.')
+    }
+
     const assets = await ensureModelFile(id, (progress) => {
       setAssetProgress(progress.stage, {
         received: progress.bytesReceived,
@@ -843,29 +976,7 @@ const loadModelInternal = async (id: ModelId): Promise<void> => {
     state._setModelStatus('loaded')
     await releaseLoadedContext()
 
-    state._setModelStatus('initialised')
-    await writeRuntimeMarker({ modelId: id, stage: 'model-load' })
-    const context = await initLlama({
-      model: assets.modelPath,
-      n_ctx: INFERENCE_CONFIG.N_CTX,
-      n_batch: INFERENCE_CONFIG.N_BATCH,
-      n_ubatch: INFERENCE_CONFIG.N_UBATCH,
-      n_threads: INFERENCE_CONFIG.N_THREADS,
-      n_gpu_layers: INFERENCE_CONFIG.N_GPU_LAYERS,
-      n_parallel: INFERENCE_CONFIG.N_PARALLEL,
-      ctx_shift: INFERENCE_CONFIG.CTX_SHIFT,
-      flash_attn_type: INFERENCE_CONFIG.FLASH_ATTN_TYPE,
-      use_mlock: false,
-    })
-
-    const parallelReady = await context.parallel.enable({
-      n_parallel: INFERENCE_CONFIG.N_PARALLEL,
-      n_batch: INFERENCE_CONFIG.N_BATCH,
-    })
-    if (!parallelReady) {
-      await context.release()
-      throw new Error('llama.rn parallel queue failed to initialise.')
-    }
+    const context = await initialiseLlamaContext(id, assets.modelPath)
 
     loaded = { id, context, multimodalReady: false, multimodalGpuRequested: null }
     await clearRuntimeMarker()
@@ -925,33 +1036,68 @@ export const inferenceService = {
       throwIfAborted(opts.signal)
 
       const turnRequiresMedia = latestUserRequiresMultimodal(messages)
+      let providerFallbackMarked = false
 
-      if (opts.provider === 'cloud' && cloudProviderService.isConfigured()) {
-        const outcome = await generateWithCloud(opts.messageId, opts.signal)
-        const content = normaliseCompletionContent(outcome.result.content)
-        const thinking = normaliseCompletionThinking(outcome.result.reasoning_content)
-        finishStream(opts.messageId)
-        state.commitStreamingMessage(opts.messageId, {
-          content,
-          thinking,
-        })
-        await extractTurnMemory(
-          opts.messageId,
-          userText,
-          content,
-          turnRequiresMedia,
-          outcome.memoryToolExecutions,
-          opts.signal,
-        )
-        state._setGenerationStatus('done')
-        return
+      const offline = storeApi.get().networkStatus === 'offline'
+      if (opts.provider === 'cloud' && cloudProviderService.isConfigured() && !offline) {
+        try {
+          const outcome = await generateWithCloud(opts.messageId, opts.signal)
+          const { content, thinking } = normaliseCompletionResult(outcome.result)
+          finishStream(opts.messageId)
+          state.commitStreamingMessage(opts.messageId, {
+            content,
+            thinking,
+          })
+          await extractTurnMemory(
+            opts.messageId,
+            userText,
+            content,
+            turnRequiresMedia,
+            outcome.memoryToolExecutions,
+            opts.signal,
+          )
+          state._setGenerationStatus('done')
+          return
+        } catch (error) {
+          if (opts.signal.aborted) throw error
+          markProviderFallback(opts.messageId, 'cloud', 'failed')
+          providerFallbackMarked = true
+        }
       }
 
-      if (opts.provider !== 'gemma-local') {
+      if (opts.provider === 'apple-fm') {
+        try {
+          const outcome = await generateWithAppleFoundation(opts.messageId, opts.signal)
+          const { content, thinking } = normaliseCompletionResult(outcome.result)
+          finishStream(opts.messageId)
+          state.commitStreamingMessage(opts.messageId, {
+            content,
+            thinking,
+          })
+          await extractTurnMemory(
+            opts.messageId,
+            userText,
+            content,
+            turnRequiresMedia,
+            outcome.memoryToolExecutions,
+            opts.signal,
+          )
+          state._setGenerationStatus('done')
+          return
+        } catch (error) {
+          if (opts.signal.aborted) throw error
+          markProviderFallback(opts.messageId, 'apple-fm', 'unavailable')
+          providerFallbackMarked = true
+        }
+      }
+
+      if (opts.provider !== 'gemma-local' && !providerFallbackMarked) {
         markProviderFallback(
           opts.messageId,
           opts.provider,
-          opts.provider === 'cloud' ? 'unconfigured' : 'unavailable',
+          opts.provider === 'cloud'
+            ? offline ? 'offline' : 'unconfigured'
+            : 'unavailable',
         )
       }
 
@@ -980,8 +1126,7 @@ export const inferenceService = {
             memoryToolExecutions: [],
           }
       const result = outcome.result
-      const content = normaliseCompletionContent(result.content)
-      const thinking = normaliseCompletionThinking(result.reasoning_content)
+      const { content, thinking } = normaliseCompletionResult(result)
       finishStream(opts.messageId)
       state.commitStreamingMessage(opts.messageId, {
         content,

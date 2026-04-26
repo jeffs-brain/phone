@@ -30,6 +30,12 @@ export const ttsSession = {
     const text = speechText(options.text)
     if (text === '') return
 
+    if (storeApi.get().networkStatus === 'offline') {
+      storeApi.get().setVoiceStatus('error')
+      storeApi.get().setVoiceError('Speech playback needs a network connection.')
+      throw new Error('Speech playback needs a network connection.')
+    }
+
     if (GRADIUM_API_KEY === undefined || GRADIUM_API_KEY.trim() === '') {
       storeApi.get().setVoiceStatus('error')
       storeApi.get().setVoiceError('Gradium API key is missing.')

@@ -493,6 +493,11 @@ export const ensureModelFile = (
   return next
 }
 
+export const isModelFileCached = (modelId: ModelId): boolean => {
+  ensureModelsDirectory()
+  return isAvailable(GEMMA_MODEL_SPECS[modelId].model)
+}
+
 export const ensureProjectorFile = (
   modelId: ModelId,
   onProgress?: (progress: ModelDownloadProgress) => void,
@@ -505,6 +510,11 @@ export const ensureProjectorFile = (
   })
   projectorInFlight.set(modelId, next)
   return next
+}
+
+export const isProjectorFileCached = (modelId: ModelId): boolean => {
+  ensureModelsDirectory()
+  return isAvailable(GEMMA_MODEL_SPECS[modelId].projector)
 }
 
 export const ensureModelAssets = (

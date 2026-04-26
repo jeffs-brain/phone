@@ -45,6 +45,7 @@ export default function Chat() {
   const clearStaged = useStore((s) => s.clearStaged)
   const generationStatus = useStore((s) => s.generationStatus)
   const modelStatus = useStore((s) => s.modelStatus)
+  const modelError = useStore((s) => s.modelError)
   const downloadBytes = useStore((s) => s.downloadBytes)
   const cancelGeneration = useStore((s) => s.cancelGeneration)
   const modelSize = useStore((s) => s.modelSize)
@@ -57,6 +58,7 @@ export default function Chat() {
   const stopRecording = useStore((s) => s.stopRecording)
   const cancelVoice = useStore((s) => s.cancelVoice)
   const stopSpeech = useStore((s) => s.stopSpeech)
+  const networkStatus = useStore((s) => s.networkStatus)
 
   const generationActive = isGenerationActive(generationStatus)
   const voiceBusy = VOICE_BUSY_STATUSES.includes(voiceStatus)
@@ -72,7 +74,9 @@ export default function Chat() {
   const statusDotColour = STATUS_DOT_COLOURS[modelStatus]
   const statusPillLabel = generationActive
     ? `${MODEL_STATUS_LABELS[modelStatus]} \u00B7 ${GENERATION_STATUS_LABELS[generationStatus].toLowerCase()}`
-    : MODEL_STATUS_LABELS[modelStatus]
+    : networkStatus === 'offline'
+      ? `${MODEL_STATUS_LABELS[modelStatus]} \u00B7 local only`
+      : MODEL_STATUS_LABELS[modelStatus]
 
   useEffect(() => {
     if (storeHydrated) return undefined
@@ -292,6 +296,7 @@ export default function Chat() {
 
       <ModelStatusBanner
         downloadBytes={downloadBytes}
+        modelError={modelError}
         modelStatus={modelStatus}
         onRetryModel={handleRetryModel}
         onUseSmallerModel={handleUseSmallerModel}

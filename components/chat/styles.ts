@@ -88,10 +88,17 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
   },
   statusErrorActions: {
+    alignItems: 'center',
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
     marginHorizontal: 20,
     marginTop: 8,
+  },
+  statusErrorText: {
+    color: colors.accent.error,
+    flexBasis: '100%',
+    ...typography.caption,
   },
   statusActionButton: {
     alignItems: 'center',

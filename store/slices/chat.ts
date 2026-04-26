@@ -105,9 +105,11 @@ export const createChatSlice: Slice<ChatSlice> = (set, get) => ({
       .filter((line) => line.trim() !== '')
 
     try {
-      const routeDecision = state.providerMode === 'smart'
-        ? await routerService.classify(routingText, history, state.manualProvider)
-        : routerService.manual(state.manualProvider)
+      const routeDecision = state.networkStatus === 'offline'
+        ? routerService.localOnly('offline')
+        : state.providerMode === 'smart'
+          ? await routerService.classify(routingText, history, state.manualProvider, abortController.signal)
+          : routerService.manual(state.manualProvider)
 
       if (abortController.signal.aborted) {
         get()._setGenerationStatus('idle')

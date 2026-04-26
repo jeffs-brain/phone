@@ -30,6 +30,8 @@ export default function Settings() {
   const generationStatus = useStore((s) => s.generationStatus)
   const providerMode = useStore((s) => s.providerMode)
   const manualProvider = useStore((s) => s.manualProvider)
+  const networkStatus = useStore((s) => s.networkStatus)
+  const networkType = useStore((s) => s.networkType)
   const voiceEnabled = useStore((s) => s.voiceEnabled)
   const thinkingEnabled = useStore((s) => s.thinkingEnabled)
   const rememberConversation = useStore((s) => s.rememberConversation)
@@ -184,6 +186,8 @@ export default function Settings() {
       <ProviderSettingsSection
         providerMode={providerMode}
         manualProvider={manualProvider}
+        networkStatus={networkStatus}
+        networkType={networkType}
         onSelectProviderMode={setProviderMode}
         onSelectManualProvider={setManualProvider}
       />

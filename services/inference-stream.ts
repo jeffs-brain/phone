@@ -1,6 +1,7 @@
 import type { TokenData } from 'llama.rn'
 
 import { STREAMING } from '../lib/constants'
+import { sanitiseModelResponse } from '../lib/chat/response-sanitizer'
 import { storeApi } from '../store'
 
 export type TokenStreamActivity = 'content' | 'thinking' | 'none'
@@ -10,6 +11,8 @@ type StreamState = {
   contentBuffer: string
   thinkingBuffer: string
   frameHandle: number | null
+  rawContent: string
+  rawThinking: string
   emittedContent: string
   emittedThinking: string
 }
@@ -40,6 +43,8 @@ const streamState = (messageId: string): StreamState => {
     contentBuffer: '',
     thinkingBuffer: '',
     frameHandle: null,
+    rawContent: '',
+    rawThinking: '',
     emittedContent: '',
     emittedThinking: '',
   }
@@ -129,12 +134,18 @@ const appendCumulativeDelta = (
 export const appendTokenData = (messageId: string, token: TokenData): TokenStreamActivity => {
   const state = streamState(messageId)
 
-  const content = appendCumulativeDelta(state.emittedContent, token.content, (chunk) => {
+  if (typeof token.content === 'string') state.rawContent = token.content
+  if (typeof token.reasoning_content === 'string') state.rawThinking = token.reasoning_content
+
+  const sanitised = sanitiseModelResponse(state.rawContent, state.rawThinking)
+  const thinkingEnabled = storeApi.get().thinkingEnabled
+
+  const content = appendCumulativeDelta(state.emittedContent, sanitised.content, (chunk) => {
     appendBuffered(messageId, chunk)
   })
   state.emittedContent = content.emitted
 
-  const thinking = appendCumulativeDelta(state.emittedThinking, token.reasoning_content, (chunk) => {
+  const thinking = appendCumulativeDelta(state.emittedThinking, thinkingEnabled ? sanitised.thinking : '', (chunk) => {
     appendThinkingBuffered(messageId, chunk)
   })
   state.emittedThinking = thinking.emitted
