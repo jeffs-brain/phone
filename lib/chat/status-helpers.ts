@@ -1,20 +1,12 @@
 import { colors } from '../theme'
+import {
+  ACTIVE_GENERATION_STATUSES,
+  isGenerationActive,
+  isModelActivityStatus,
+} from '../runtime-status'
 import type { ModelStatus } from '../../store/slices/inference'
 import type { VoiceStatus } from '../../store/slices/voice'
 import type { GenerationStatus, ProviderId } from '../../store/types'
-
-const ACTIVE_GENERATION_STATUSES: readonly GenerationStatus[] = [
-  'routing',
-  'preparing-vision',
-  'checking-vision',
-  'downloading-vision',
-  'verifying-vision',
-  'initialising-vision',
-  'loading-first-token',
-  'thinking',
-  'using-tools',
-  'streaming',
-]
 
 export const PROVIDER_LABELS: Record<ProviderId, string> = {
   'gemma-local': 'On-device Gemma',
@@ -70,14 +62,6 @@ export const VOICE_BUSY_STATUSES: readonly VoiceStatus[] = [
   'sending',
 ]
 
-const MODEL_ACTIVITY_STATUSES: readonly ModelStatus[] = [
-  'checking',
-  'downloading',
-  'verifying',
-  'loaded',
-  'initialised',
-]
-
 export const STATUS_DOT_COLOURS: Record<ModelStatus, string> = {
   ready: colors.accent.success,
   downloading: colors.accent.warning,
@@ -89,10 +73,4 @@ export const STATUS_DOT_COLOURS: Record<ModelStatus, string> = {
   unloaded: colors.text.muted,
 }
 
-export const isGenerationActive = (status: GenerationStatus): boolean => (
-  ACTIVE_GENERATION_STATUSES.includes(status)
-)
-
-export const isModelActivityStatus = (status: ModelStatus): boolean => (
-  MODEL_ACTIVITY_STATUSES.includes(status)
-)
+export { ACTIVE_GENERATION_STATUSES, isGenerationActive, isModelActivityStatus }

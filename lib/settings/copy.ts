@@ -1,4 +1,5 @@
 import { INFERENCE_CONFIG } from '../constants'
+import { ACTIVE_GENERATION_STATUSES, BUSY_MODEL_STATUSES } from '../runtime-status'
 import type { RuntimeDiagnostics } from '../../services/inference'
 import type { MemoryNotesStatus } from '../../store/slices/memory'
 import type { ModelId, ModelStatus } from '../../store/slices/inference'
@@ -17,30 +18,11 @@ export const MODEL_OPTIONS = [
 
 export const PROVIDER_OPTIONS = [
   { value: 'gemma-local', label: 'Local Gemma', detail: 'Default private path' },
-  { value: 'apple-fm', label: 'Apple FM', detail: 'Planned iOS 26 provider' },
+  { value: 'apple-fm', label: 'Apple FM', detail: 'On-device Apple Foundation Models when available' },
   { value: 'cloud', label: 'Cloud', detail: 'OpenAI-compatible large-tier fallback' },
 ] as const satisfies readonly SettingsOption<ProviderId>[]
 
-export const BUSY_MODEL_STATUSES: readonly ModelStatus[] = [
-  'checking',
-  'downloading',
-  'verifying',
-  'loaded',
-  'initialised',
-]
-
-export const ACTIVE_GENERATION_STATUSES: readonly GenerationStatus[] = [
-  'routing',
-  'preparing-vision',
-  'checking-vision',
-  'downloading-vision',
-  'verifying-vision',
-  'initialising-vision',
-  'loading-first-token',
-  'thinking',
-  'using-tools',
-  'streaming',
-]
+export { ACTIVE_GENERATION_STATUSES, BUSY_MODEL_STATUSES }
 
 export const modelLabel = (id: ModelId): string =>
   MODEL_OPTIONS.find((option) => option.value === id)?.label ?? id

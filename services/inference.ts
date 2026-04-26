@@ -116,6 +116,8 @@ const CLOUD_SYSTEM_PROMPT = [
   'This response is being produced by the selected cloud provider, so do not claim that this specific answer ran on-device.',
   'You do not have direct access to the phone memory tools in this cloud turn unless memory text appears in the prompt.',
 ].join('\n')
+const MEMORY_TOOLS: object = MEMORY_TOOL_DEFINITIONS
+const DISABLE_PARALLEL_TOOL_CALLS = false as unknown as object
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -181,11 +183,11 @@ const buildCompletionParams = (
       : {}),
     ...(enableTools
       ? {
-          tools: MEMORY_TOOL_DEFINITIONS as unknown as object,
+          tools: MEMORY_TOOLS,
           tool_choice: 'auto',
         }
       : {}),
-    parallel_tool_calls: false as unknown as object,
+    parallel_tool_calls: DISABLE_PARALLEL_TOOL_CALLS,
   }
 }
 
@@ -203,7 +205,7 @@ const buildMediaCompletionParams = (): CompletionParams => {
     stop: [...GEMMA_STOPS],
     enable_thinking: false,
     reasoning_format: 'none',
-    parallel_tool_calls: false as unknown as object,
+    parallel_tool_calls: DISABLE_PARALLEL_TOOL_CALLS,
   }
 }
 
@@ -304,7 +306,7 @@ const structuredMemoryCompletion = async (
       reasoning_format: 'none',
       temperature: request.temperature ?? 0,
       force_pure_content: true,
-      parallel_tool_calls: false as unknown as object,
+      parallel_tool_calls: DISABLE_PARALLEL_TOOL_CALLS,
     },
   )
   return normaliseCompletionContent(result.content)
@@ -333,7 +335,7 @@ const memoryCompletion = async (
       reasoning_format: 'none',
       temperature: request.temperature ?? 0,
       force_pure_content: true,
-      parallel_tool_calls: false as unknown as object,
+      parallel_tool_calls: DISABLE_PARALLEL_TOOL_CALLS,
     },
   )
 
@@ -766,6 +768,7 @@ const generateWithMemoryTools = async (
   let messages = buildMessages(messageId, false)
   const memoryToolExecutions: MemoryToolExecutionSummary[] = []
   const memoryGrounding: string[] = []
+  let usedMemoryTools = false
   let result = await completeWithLoadedContext(
     signal,
     buildCompletionParams(messageId, false, messages, true),
@@ -774,8 +777,12 @@ const generateWithMemoryTools = async (
   for (let round = 0; round < TOOL_LIMITS.MAX_ROUNDS; round += 1) {
     throwIfAborted(signal)
     const preparedToolCalls = completionToolCalls(result).map(prepareToolCall)
-    if (preparedToolCalls.length === 0) break
+    if (preparedToolCalls.length === 0) {
+      if (!usedMemoryTools) return { result, memoryToolExecutions }
+      break
+    }
 
+    usedMemoryTools = true
     const assistantToolCalls = preparedToolCalls.map((prepared) => prepared.call)
     const toolResult = await runMemoryToolCalls(messageId, preparedToolCalls)
     memoryToolExecutions.push(...toolResult.executions)

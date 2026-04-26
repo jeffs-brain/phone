@@ -2,6 +2,7 @@ import Constants from 'expo-constants'
 
 import { ROUTING } from '../lib/constants'
 import type { ProviderId, RouteDecision, Tier } from '../store/types'
+import { fallbackDecision, localOnlyDecision, manualDecision } from './router-core'
 
 type JsonRecord = Record<string, unknown>
 type RoutingLabel = typeof ROUTING_LABELS[number]
@@ -182,26 +183,12 @@ const fetchWithTimeout = (
 }
 
 export const routerService = {
-  localOnly(reason: string): RouteDecision {
-    return {
-      tier: 'medium',
-      provider: 'gemma-local',
-      label: `local-only:${reason}`,
-      confidence: 1,
-      latencyMs: 0,
-      routed: false,
-    }
+  localOnly(reason: string, provider: Exclude<ProviderId, 'cloud'> = 'gemma-local'): RouteDecision {
+    return localOnlyDecision(reason, provider)
   },
 
   manual(provider: ProviderId): RouteDecision {
-    return {
-      tier: provider === 'cloud' ? 'large' : 'medium',
-      provider,
-      label: 'manual',
-      confidence: 1,
-      latencyMs: 0,
-      routed: false,
-    }
+    return manualDecision(provider)
   },
 
   async classify(
@@ -212,10 +199,10 @@ export const routerService = {
   ): Promise<RouteDecision> {
     const start = performance.now()
     if (!FASTINO_API_KEY) {
-      return fallback('missing-key', start, fallbackProvider)
+      return fallbackDecision('missing-key', start, fallbackProvider)
     }
     if (!FASTINO_MODEL_ID) {
-      return fallback('missing-model', start, fallbackProvider)
+      return fallbackDecision('missing-model', start, fallbackProvider)
     }
 
     try {
@@ -242,10 +229,10 @@ export const routerService = {
         }),
       }, ROUTING.FASTINO_TIMEOUT_MS, signal)
 
-      if (!response.ok) return fallback(`http-${response.status}`, start, fallbackProvider)
+      if (!response.ok) return fallbackDecision(`http-${response.status}`, start, fallbackProvider)
       const data = await response.json()
       const classification = parseFastinoClassification(data)
-      if (classification === null) return fallback('unparseable-response', start, fallbackProvider)
+      if (classification === null) return fallbackDecision('unparseable-response', start, fallbackProvider)
 
       const { label, confidence } = classification
       let tier = LABEL_TO_TIER[label] ?? LABEL_TO_TIER[DEFAULT_LABEL]
@@ -261,16 +248,7 @@ export const routerService = {
       }
     } catch (e) {
       const name = e instanceof Error ? e.name : 'unknown'
-      return fallback(`exception:${name}`, start, fallbackProvider)
+      return fallbackDecision(`exception:${name}`, start, fallbackProvider)
     }
   },
 }
-
-const fallback = (reason: string, start: number, provider: ProviderId): RouteDecision => ({
-  tier: provider === 'cloud' ? 'large' : 'medium',
-  provider,
-  label: `fallback:${reason}`,
-  confidence: 0,
-  latencyMs: performance.now() - start,
-  routed: false,
-})
