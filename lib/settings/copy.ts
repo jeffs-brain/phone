@@ -3,6 +3,7 @@ import { ACTIVE_GENERATION_STATUSES, BUSY_MODEL_STATUSES } from '../runtime-stat
 import type { RuntimeDiagnostics } from '../../services/inference'
 import type { MemoryNotesStatus } from '../../store/slices/memory'
 import type { ModelId, ModelStatus } from '../../store/slices/inference'
+import type { VoiceTransport } from '../../store/slices/settings'
 import type { GenerationStatus, ProviderId } from '../../store/types'
 
 export type SettingsOption<T extends string> = {
@@ -19,8 +20,16 @@ export const MODEL_OPTIONS = [
 export const PROVIDER_OPTIONS = [
   { value: 'gemma-local', label: 'Local Gemma', detail: 'Default private path' },
   { value: 'apple-fm', label: 'Apple FM', detail: 'On-device Apple Foundation Models when available' },
-  { value: 'cloud', label: 'Cloud', detail: 'OpenAI-compatible large-tier fallback' },
+  { value: 'cloud', label: 'Cloud', detail: 'Gemini large-tier fallback when configured' },
 ] as const satisfies readonly SettingsOption<ProviderId>[]
+
+export const VOICE_TRANSPORT_OPTIONS = [
+  { value: 'gradium-direct', label: 'Gradium Direct', detail: 'Fast STT with manual message playback' },
+  { value: 'livekit-ai-coustics', label: 'LiveKit ai-coustics', detail: 'Enhanced mic route through the voice agent' },
+] as const satisfies readonly SettingsOption<VoiceTransport>[]
+
+export const voiceTransportLabel = (transport: VoiceTransport): string =>
+  VOICE_TRANSPORT_OPTIONS.find((option) => option.value === transport)?.label ?? transport
 
 export { ACTIVE_GENERATION_STATUSES, BUSY_MODEL_STATUSES }
 

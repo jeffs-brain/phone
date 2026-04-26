@@ -1,4 +1,5 @@
 import type { Slice } from '../types'
+import type { VoiceTransport } from './settings'
 
 export type TtsItem = { id: string; text: string; messageId: string }
 export type SpeakMessageInput = { messageId: string; text: string }
@@ -21,6 +22,7 @@ export type VoiceSlice = {
   asrPartial: string
   asrFinal: string
   voiceError: string | null
+  activeVoiceTransport: VoiceTransport | null
   vadInactivity: number | null
   sttRequestId: string | null
   ttsRequestId: string | null
@@ -45,13 +47,14 @@ export type VoiceSlice = {
   advanceTts: () => void
 }
 
-export const createVoiceSlice: Slice<VoiceSlice> = (set) => ({
+export const createVoiceSlice: Slice<VoiceSlice> = (set, get) => ({
   voiceStatus: 'idle',
   micPermission: 'unknown',
   recording: false,
   asrPartial: '',
   asrFinal: '',
   voiceError: null,
+  activeVoiceTransport: null,
   vadInactivity: null,
   sttRequestId: null,
   ttsRequestId: null,
@@ -59,18 +62,51 @@ export const createVoiceSlice: Slice<VoiceSlice> = (set) => ({
   ttsCurrent: null,
 
   requestMicPermission: async () => {
+    if (get().voiceTransport === 'livekit-ai-coustics') {
+      const { livekitVoiceSession } = await import('../../services/voice/livekit-session')
+      await livekitVoiceSession.requestMicPermission()
+      return
+    }
+
     const { voiceSession } = await import('../../services/voice/session')
     await voiceSession.requestMicPermission()
   },
   startRecording: async () => {
+    const voiceTransport = get().voiceTransport
+    set({ activeVoiceTransport: voiceTransport }, false, 'voice/setActiveVoiceTransport')
+
+    if (voiceTransport === 'livekit-ai-coustics') {
+      const { livekitVoiceSession } = await import('../../services/voice/livekit-session')
+      await livekitVoiceSession.startTurn()
+      if (get().voiceStatus === 'idle' || get().voiceStatus === 'error') {
+        set({ activeVoiceTransport: null }, false, 'voice/clearActiveVoiceTransport')
+      }
+      return
+    }
+
     const { voiceSession } = await import('../../services/voice/session')
     await voiceSession.startTurn()
+    if (get().voiceStatus === 'idle' || get().voiceStatus === 'error') {
+      set({ activeVoiceTransport: null }, false, 'voice/clearActiveVoiceTransport')
+    }
   },
   stopRecording: async () => {
+    if ((get().activeVoiceTransport ?? get().voiceTransport) === 'livekit-ai-coustics') {
+      const { livekitVoiceSession } = await import('../../services/voice/livekit-session')
+      await livekitVoiceSession.stopTurn()
+      return
+    }
+
     const { voiceSession } = await import('../../services/voice/session')
     await voiceSession.stopTurn()
   },
   cancelVoice: async () => {
+    if ((get().activeVoiceTransport ?? get().voiceTransport) === 'livekit-ai-coustics') {
+      const { livekitVoiceSession } = await import('../../services/voice/livekit-session')
+      await livekitVoiceSession.cancelTurn()
+      return
+    }
+
     const { voiceSession } = await import('../../services/voice/session')
     await voiceSession.cancelTurn()
   },
@@ -91,7 +127,10 @@ export const createVoiceSlice: Slice<VoiceSlice> = (set) => ({
     })
   },
 
-  setVoiceStatus: (voiceStatus) => set({ voiceStatus }, false, 'voice/setVoiceStatus'),
+  setVoiceStatus: (voiceStatus) => set({
+    voiceStatus,
+    ...(voiceStatus === 'idle' || voiceStatus === 'error' ? { activeVoiceTransport: null } : {}),
+  }, false, 'voice/setVoiceStatus'),
   setMicPermission: (micPermission) => set({ micPermission }, false, 'voice/setMicPermission'),
   setRecording: (recording) => set({ recording }, false, 'voice/setRecording'),
   setAsrPartial: (asrPartial) => set({ asrPartial }, false, 'voice/setAsrPartial'),

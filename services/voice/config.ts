@@ -6,6 +6,15 @@ export const GRADIUM_TTS_ENDPOINT = 'wss://api.gradium.ai/api/speech/tts'
 export const GRADIUM_API_KEY =
   process.env.EXPO_PUBLIC_GRADIUM_API_KEY ?? Constants.expoConfig?.extra?.gradiumApiKey
 
+export const LIVEKIT_TOKEN_ENDPOINT =
+  process.env.EXPO_PUBLIC_LIVEKIT_TOKEN_ENDPOINT ?? Constants.expoConfig?.extra?.livekitTokenEndpoint
+
+export const LIVEKIT_VOICE = {
+  CONNECT_TIMEOUT_MS: 10000,
+  FINAL_TRANSCRIPT_TIMEOUT_MS: 8000,
+  SPEECH_DONE_TIMEOUT_MS: 90000,
+} as const
+
 export const VOICE_CAPTURE = {
   INPUT_SAMPLE_RATE: 48000,
   TARGET_SAMPLE_RATE: 24000,

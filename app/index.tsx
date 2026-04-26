@@ -51,6 +51,7 @@ export default function Chat() {
   const modelSize = useStore((s) => s.modelSize)
   const setModelSize = useStore((s) => s.setModelSize)
   const voiceEnabled = useStore((s) => s.voiceEnabled)
+  const voiceTransport = useStore((s) => s.voiceTransport)
   const voiceStatus = useStore((s) => s.voiceStatus)
   const asrPartial = useStore((s) => s.asrPartial)
   const voiceError = useStore((s) => s.voiceError)
@@ -329,6 +330,7 @@ export default function Chat() {
         voiceCanPress={voiceCanPress}
         voiceError={voiceError}
         voiceStatus={voiceStatus}
+        voiceTransport={voiceTransport}
         voiceTranscript={voiceTranscript}
       />
     </KeyboardAvoidingView>

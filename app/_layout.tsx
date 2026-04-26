@@ -2,6 +2,7 @@ import '../global.css'
 
 import { useEffect } from 'react'
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo'
+import { registerGlobals } from '@livekit/react-native'
 import { Stack } from 'expo-router'
 import { StatusBar } from 'expo-status-bar'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
@@ -15,6 +16,8 @@ import {
 } from '../services/runtime-marker'
 import { storeApi } from '../store'
 import type { NetworkStatus } from '../store/slices/network'
+
+registerGlobals()
 
 const networkStatusFromState = (state: NetInfoState): NetworkStatus => {
   if (state.isConnected === false || state.isInternetReachable === false) return 'offline'

@@ -31,6 +31,7 @@ export const useStore = create<RootState>()(
           partialize: (s) => ({
             modelSize: s.modelSize,
             voiceEnabled: s.voiceEnabled,
+            voiceTransport: s.voiceTransport,
             thinkingEnabled: s.thinkingEnabled,
             rememberConversation: s.rememberConversation,
             providerMode: s.providerMode,

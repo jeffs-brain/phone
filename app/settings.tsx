@@ -33,6 +33,8 @@ export default function Settings() {
   const networkStatus = useStore((s) => s.networkStatus)
   const networkType = useStore((s) => s.networkType)
   const voiceEnabled = useStore((s) => s.voiceEnabled)
+  const voiceTransport = useStore((s) => s.voiceTransport)
+  const voiceStatus = useStore((s) => s.voiceStatus)
   const thinkingEnabled = useStore((s) => s.thinkingEnabled)
   const rememberConversation = useStore((s) => s.rememberConversation)
   const devMode = useStore((s) => s.devMode)
@@ -44,6 +46,7 @@ export default function Settings() {
   const setProviderMode = useStore((s) => s.setProviderMode)
   const setManualProvider = useStore((s) => s.setManualProvider)
   const setVoiceEnabled = useStore((s) => s.setVoiceEnabled)
+  const setVoiceTransport = useStore((s) => s.setVoiceTransport)
   const setThinkingEnabled = useStore((s) => s.setThinkingEnabled)
   const setRememberConversation = useStore((s) => s.setRememberConversation)
   const setDevMode = useStore((s) => s.setDevMode)
@@ -52,6 +55,7 @@ export default function Settings() {
   const startNewThread = useStore((s) => s.startNewThread)
   const modelBusy = BUSY_MODEL_STATUSES.includes(modelStatus)
   const generationBusy = ACTIVE_GENERATION_STATUSES.includes(generationStatus)
+  const voiceTransportBusy = voiceStatus !== 'idle' && voiceStatus !== 'error'
   const [projectorGpuAutoDisabled, setProjectorGpuAutoDisabled] = useState<boolean | null>(null)
   const [projectorGpuGuardBusy, setProjectorGpuGuardBusy] = useState(false)
   const [projectorGpuGuardError, setProjectorGpuGuardError] = useState<string | null>(null)
@@ -194,10 +198,13 @@ export default function Settings() {
 
       <ConversationSettingsSection
         voiceEnabled={voiceEnabled}
+        voiceTransport={voiceTransport}
+        voiceTransportBusy={voiceTransportBusy}
         thinkingEnabled={thinkingEnabled}
         rememberConversation={rememberConversation}
         devMode={devMode}
         onVoiceEnabledChange={setVoiceEnabled}
+        onVoiceTransportChange={setVoiceTransport}
         onThinkingEnabledChange={setThinkingEnabled}
         onRememberConversationChange={setRememberConversation}
         onDevModeChange={setDevMode}

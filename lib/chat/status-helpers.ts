@@ -44,7 +44,7 @@ export const GENERATION_STATUS_LABELS: Record<GenerationStatus, string> = {
 export const VOICE_STATUS_LABELS: Record<VoiceStatus, string> = {
   idle: 'Voice ready',
   'requesting-permission': 'Requesting mic',
-  connecting: 'Connecting to Gradium',
+  connecting: 'Connecting voice',
   listening: '\u{1F442} Listening',
   'ending-turn': 'Ending turn',
   transcribing: '\u270D\uFE0F Transcribing',
