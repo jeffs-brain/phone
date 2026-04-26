@@ -232,7 +232,6 @@ export function ConversationSettingsSection({
   thinkingEnabled,
   rememberConversation,
   devMode,
-  generationBusy,
   onVoiceEnabledChange,
   onVoiceTransportChange,
   onThinkingEnabledChange,
@@ -246,7 +245,6 @@ export function ConversationSettingsSection({
   readonly thinkingEnabled: boolean
   readonly rememberConversation: boolean
   readonly devMode: boolean
-  readonly generationBusy: boolean
   readonly onVoiceEnabledChange: (enabled: boolean) => void
   readonly onVoiceTransportChange: (transport: VoiceTransport) => void
   readonly onThinkingEnabledChange: (enabled: boolean) => void
@@ -291,7 +289,7 @@ export function ConversationSettingsSection({
         value={devMode}
         onValueChange={onDevModeChange}
       />
-      <ActionButton label="✨ New chat" onPress={onStartNewThread} muted disabled={generationBusy} />
+      <ActionButton label="✨ New chat" onPress={onStartNewThread} muted />
     </SettingsSection>
   )
 }

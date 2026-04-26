@@ -65,6 +65,12 @@ export const ROUTING = {
   CONFIDENCE_BUMP_THRESHOLD: 0.6,
 } as const
 
+export const APPLE_PROVIDER = {
+  AVAILABILITY_TIMEOUT_MS: 2500,
+  IMAGE_ANALYSIS_TIMEOUT_MS: 4500,
+  TEXT_GENERATION_TIMEOUT_MS: 10000,
+} as const
+
 export const BRAIN_ID = 'jeff'
 
 export const SYSTEM_PROMPT = [

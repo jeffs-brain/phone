@@ -101,7 +101,9 @@ export const createChatSlice: Slice<ChatSlice> = (set, get) => ({
           : routerService.manual(state.manualProvider)
 
       if (abortController.signal.aborted) {
-        get()._setGenerationStatus('idle')
+        if (get().abortController === abortController) {
+          get()._setGenerationStatus('idle')
+        }
         return
       }
 
@@ -117,6 +119,8 @@ export const createChatSlice: Slice<ChatSlice> = (set, get) => ({
         signal: abortController.signal,
       })
     } catch (error) {
+      if (get().abortController !== abortController) return
+
       if (abortController.signal.aborted) {
         get()._setGenerationStatus('idle')
         return
@@ -124,7 +128,9 @@ export const createChatSlice: Slice<ChatSlice> = (set, get) => ({
       get()._setGenerationStatus('error')
       throw error
     } finally {
-      get()._setAbortController(null)
+      if (get().abortController === abortController) {
+        get()._setAbortController(null)
+      }
     }
   },
 

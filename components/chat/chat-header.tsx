@@ -3,14 +3,12 @@ import { Pressable, Text, View } from 'react-native'
 import { styles } from './styles'
 
 export type ChatHeaderProps = {
-  readonly generationActive: boolean
   readonly onNewThread: () => void
   readonly onOpenMemories: () => void
   readonly onOpenSettings: () => void
 }
 
 export function ChatHeader({
-  generationActive,
   onNewThread,
   onOpenMemories,
   onOpenSettings,
@@ -25,12 +23,9 @@ export function ChatHeader({
         <Pressable
           accessibilityLabel="New chat"
           accessibilityRole="button"
-          accessibilityState={{ disabled: generationActive }}
-          disabled={generationActive}
           onPress={onNewThread}
           style={({ pressed }) => [
             styles.headerIconButton,
-            generationActive ? styles.disabledHeaderButton : null,
             pressed ? styles.pressed : null,
           ]}
         >

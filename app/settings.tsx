@@ -53,6 +53,7 @@ export default function Settings() {
   const loadModel = useStore((s) => s.loadModel)
   const unloadModel = useStore((s) => s.unloadModel)
   const startNewThread = useStore((s) => s.startNewThread)
+  const cancelGeneration = useStore((s) => s.cancelGeneration)
   const modelBusy = BUSY_MODEL_STATUSES.includes(modelStatus)
   const generationBusy = ACTIVE_GENERATION_STATUSES.includes(generationStatus)
   const voiceTransportBusy = voiceStatus !== 'idle' && voiceStatus !== 'error'
@@ -113,10 +114,10 @@ export default function Settings() {
   }, [])
 
   const handleStartNewThread = useCallback(() => {
-    if (generationBusy) return
+    cancelGeneration()
     startNewThread()
     router.replace('/')
-  }, [generationBusy, router, startNewThread])
+  }, [cancelGeneration, router, startNewThread])
 
   const handleOpenMemories = useCallback(() => {
     router.push('/memories')
@@ -208,7 +209,6 @@ export default function Settings() {
         onThinkingEnabledChange={setThinkingEnabled}
         onRememberConversationChange={setRememberConversation}
         onDevModeChange={setDevMode}
-        generationBusy={generationBusy}
         onStartNewThread={handleStartNewThread}
       />
     </ScrollView>

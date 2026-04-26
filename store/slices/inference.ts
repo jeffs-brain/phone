@@ -47,6 +47,10 @@ export const createInferenceSlice: Slice<InferenceSlice> = (set, get) => ({
   },
   cancelGeneration: () => {
     get().abortController?.abort()
+    set({
+      abortController: null,
+      generationStatus: 'idle',
+    }, false, 'inference/cancelGeneration')
   },
 
   _setModelId: (modelId) => set({ modelId }, false, 'inference/_setModelId'),

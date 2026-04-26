@@ -14,7 +14,7 @@ import type {
   StructuredRequest as SdkStructuredRequest,
 } from '@jeffs-brain/memory-react-native'
 
-import { GEMMA_STOPS, INFERENCE_CONFIG, SYSTEM_PROMPT, TOOL_LIMITS } from '../lib/constants'
+import { APPLE_PROVIDER, GEMMA_STOPS, INFERENCE_CONFIG, SYSTEM_PROMPT, TOOL_LIMITS } from '../lib/constants'
 import { sanitiseModelResponse } from '../lib/chat/response-sanitizer'
 import { createId } from '../lib/id'
 import { storeApi } from '../store'
@@ -126,6 +126,40 @@ const MEMORY_TOOLS: object = MEMORY_TOOL_DEFINITIONS
 const DISABLE_PARALLEL_TOOL_CALLS = false as unknown as object
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+const currentGenerationOwnsState = (signal: AbortSignal): boolean =>
+  storeApi.get().abortController?.signal === signal
+
+const withAbortableTimeout = async <T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> => {
+  if (signal.aborted) throw new Error('Generation cancelled.')
+
+  let timeout: ReturnType<typeof setTimeout> | null = null
+  let rejectForAbort: ((error: Error) => void) | null = null
+  const onAbort = (): void => {
+    rejectForAbort?.(new Error('Generation cancelled.'))
+  }
+  const abortPromise = new Promise<T>((_, reject) => {
+    rejectForAbort = reject
+    signal.addEventListener('abort', onAbort, { once: true })
+    timeout = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      reject(new Error(timeoutMessage))
+    }, timeoutMs)
+  })
+
+  try {
+    return await Promise.race([promise, abortPromise])
+  } finally {
+    if (timeout !== null) clearTimeout(timeout)
+    rejectForAbort = null
+    signal.removeEventListener('abort', onAbort)
+  }
+}
 
 const setAssetProgress = (stage: 'checking' | 'available' | 'downloading' | 'verifying' | 'downloaded', bytes: {
   readonly received: number
@@ -872,7 +906,12 @@ const generateWithAppleVisionTextFallback = async (
   if (image === null) throw new Error('Image attachment did not reach the local vision fallback.')
 
   storeApi.get()._setGenerationStatus('preparing-vision')
-  const analysis = await appleIntelligenceService.analyseImage(image.uri)
+  const analysis = await withAbortableTimeout(
+    appleIntelligenceService.analyseImage(image.uri),
+    signal,
+    APPLE_PROVIDER.IMAGE_ANALYSIS_TIMEOUT_MS,
+    'Apple Vision image analysis timed out.',
+  )
   throwIfAborted(signal)
 
   const messages = withAppleVisionGrounding(buildMessages(messageId, false), analysis, reason)
@@ -890,7 +929,12 @@ const generateWithAppleFoundation = async (
   signal: AbortSignal,
 ): Promise<GenerationOutcome> => {
   throwIfAborted(signal)
-  const availability = await appleIntelligenceService.foundationAvailability()
+  const availability = await withAbortableTimeout(
+    appleIntelligenceService.foundationAvailability(),
+    signal,
+    APPLE_PROVIDER.AVAILABILITY_TIMEOUT_MS,
+    'Apple Foundation availability check timed out.',
+  )
   if (!availability.available) {
     throw new Error(`Apple Foundation Models unavailable${availability.reason === null ? '' : `: ${availability.reason}`}.`)
   }
@@ -906,20 +950,30 @@ const generateWithAppleFoundation = async (
           role: 'user' as const,
           content: [
             'Use these Apple Vision signals from the attached image to answer the current image question.',
-            imageAnalysisText(await appleIntelligenceService.analyseImage(image.uri)),
+            imageAnalysisText(await withAbortableTimeout(
+              appleIntelligenceService.analyseImage(image.uri),
+              signal,
+              APPLE_PROVIDER.IMAGE_ANALYSIS_TIMEOUT_MS,
+              'Apple Vision image analysis timed out.',
+            )),
           ].join('\n\n'),
         },
       ]
 
-  const content = await appleIntelligenceService.generateText({
-    instructions: [
-      SYSTEM_PROMPT,
-      'This response is being produced by Apple Foundation Models on-device.',
-      'If Apple Vision supplied OCR or labels, answer only from those image signals and say when they are insufficient.',
-    ].join('\n'),
-    messages: finalMessages,
-    maxTokens: INFERENCE_CONFIG.N_PREDICT_MAX,
-  })
+  const content = await withAbortableTimeout(
+    appleIntelligenceService.generateText({
+      instructions: [
+        SYSTEM_PROMPT,
+        'This response is being produced by Apple Foundation Models on-device.',
+        'If Apple Vision supplied OCR or labels, answer only from those image signals and say when they are insufficient.',
+      ].join('\n'),
+      messages: finalMessages,
+      maxTokens: INFERENCE_CONFIG.N_PREDICT_MAX,
+    }),
+    signal,
+    APPLE_PROVIDER.TEXT_GENERATION_TIMEOUT_MS,
+    'Apple Foundation text generation timed out.',
+  )
   storeApi.get()._setGenerationStatus('streaming')
   appendBuffered(messageId, content)
   return {
@@ -1221,8 +1275,10 @@ export const inferenceService = {
     } catch (error) {
       finishStream(opts.messageId)
       if (opts.signal.aborted) {
-        state.commitStreamingMessage(opts.messageId)
-        state._setGenerationStatus('idle')
+        if (currentGenerationOwnsState(opts.signal)) {
+          state.commitStreamingMessage(opts.messageId)
+          state._setGenerationStatus('idle')
+        }
         return
       }
 
@@ -1230,7 +1286,9 @@ export const inferenceService = {
       appendBuffered(opts.messageId, `Local inference failed: ${message}`)
       finishStream(opts.messageId)
       state.commitStreamingMessage(opts.messageId)
-      state._setGenerationStatus('error')
+      if (currentGenerationOwnsState(opts.signal)) {
+        state._setGenerationStatus('error')
+      }
     }
   },
 }

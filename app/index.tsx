@@ -246,10 +246,10 @@ export default function Chat() {
   }, [router])
 
   const handleNewThread = useCallback(() => {
-    if (generationActive) return
     hapticButton()
     const start = (): void => {
       setActionError(null)
+      cancelGeneration()
       startNewThread()
     }
     if (messages.length === 0) {
@@ -264,7 +264,7 @@ export default function Chat() {
         { text: 'New chat', style: 'destructive', onPress: start },
       ],
     )
-  }, [generationActive, messages.length, startNewThread])
+  }, [cancelGeneration, messages.length, startNewThread])
 
   const handleRetryModel = useCallback(() => {
     setActionError(null)
@@ -289,7 +289,6 @@ export default function Chat() {
       style={[styles.root, { paddingTop: insets.top + 14 }]}
     >
       <ChatHeader
-        generationActive={generationActive}
         onNewThread={handleNewThread}
         onOpenMemories={handleOpenMemories}
         onOpenSettings={handleOpenSettings}
